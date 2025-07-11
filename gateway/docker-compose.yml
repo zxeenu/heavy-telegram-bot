@@ -1,0 +1,11 @@
+services:
+  gateway:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      PYTHONUNBUFFERED: 1
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASS: ${RABBITMQ_PASS}
