@@ -59,7 +59,21 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     await ctx.safe_publish(
         routing_key='telegram_events', body=json_str, exchange_name=''
     )
-    ctx.logger.info(json_str)
+    
+    # Extract key info for logging
+    user = getattr(message.from_user, 'username', None) or getattr(message.from_user, 'id', 'UnknownUser')
+    text = getattr(message, 'text', '<no text>')
+    chat_id = getattr(message.chat, 'id', 'UnknownChat')
+    chat_type = getattr(message.chat, 'type', 'UnknownType')
+    group_id = chat_id if chat_type in ('group', 'supergroup') else None
+
+    log_msg = (
+        f"User: {user} | "
+        f"Text: {text[:50]}{'...' if len(text) > 50 else ''} | "
+        f"Chat ID: {chat_id} | "
+        f"Group ID: {group_id or 'N/A'}"
+    )
+    ctx.logger.info(log_msg)
 
 
 # Background task example
