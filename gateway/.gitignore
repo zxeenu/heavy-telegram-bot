@@ -208,3 +208,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Hyrogram
+*.session
+*.session-shm
+*.session-wal
