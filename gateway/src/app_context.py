@@ -1,29 +1,15 @@
-import logging
-import pika
-from pika.adapters.blocking_connection import BlockingConnection
-from pika.channel import Channel
-from pika import PlainCredentials, ConnectionParameters
+import aio_pika
 import os
+import logging
+from typing import Optional
 
 
-class AppContext:
+class AsyncAppContext:
     logger: logging.Logger
-    connection: BlockingConnection
-    channel: Channel
-    _params: ConnectionParameters
+    connection: Optional[aio_pika.RobustConnection]
+    channel: Optional[aio_pika.Channel]
 
     def __init__(self) -> None:
-        rabbitmq_credentials = PlainCredentials(
-            os.environ["RABBITMQ_USER"],
-            os.environ["RABBITMQ_PASS"]
-        )
-
-        self._params = ConnectionParameters(
-            os.environ["RABBITMQ_HOST"],
-            int(os.environ["RABBITMQ_PORT"]),
-            credentials=rabbitmq_credentials
-        )
-
         self.logger = logging.getLogger("Gateway")
         self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
@@ -32,27 +18,42 @@ class AppContext:
                 '%(asctime)s %(levelname)s %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+        self.connection = None
+        self.channel = None
 
-        self._connect()
+    async def connect(self) -> None:
+        self.connection = await aio_pika.connect_robust(
+            f"amqp://{os.environ['RABBITMQ_USER']}:{os.environ['RABBITMQ_PASS']}@"
+            f"{os.environ['RABBITMQ_HOST']}:{os.environ['RABBITMQ_PORT']}/"
+        )
+        self.channel = await self.connection.channel()
+        self.logger.info("Connected to RabbitMQ (async)")
 
-    def _connect(self):
-        self.connection = pika.BlockingConnection(self._params)
-        self.channel = self.connection.channel()
-        self.logger.info("Connected to RabbitMQ")
+        # Optionally declare queues here if you want
+        # await self.channel.declare_queue('telegram_events', durable=False)
 
-    def safe_publish(self, exchange: str, routing_key: str, body: str):
-        if self.connection.is_closed or self.channel.is_closed:
-            self.logger.warning("RabbitMQ channel closed — reconnecting...")
-            self._connect()
+    async def safe_publish(self, routing_key: str, body: str, exchange_name: str = '') -> None:
+        if (self.connection is None or self.connection.is_closed or
+                self.channel is None or self.channel.is_closed):
+            self.logger.warning(
+                "Connection or channel closed, reconnecting...")
+            await self.connect()
 
-        self.channel.basic_publish(
-            exchange=exchange, routing_key=routing_key, body=body)
+        exchange: aio_pika.Exchange
+        if exchange_name:
+            exchange = await self.channel.get_exchange(exchange_name)
+        else:
+            exchange = self.channel.default_exchange  # type: ignore
 
-    def close(self) -> None:
-        try:
-            if self.channel.is_open:
-                self.channel.close()
-            if self.connection.is_open:
-                self.connection.close()
-        finally:
-            self.logger.info("Closed RabbitMQ connection")
+        await exchange.publish(
+            aio_pika.Message(body=body.encode()),
+            routing_key=routing_key
+        )
+        self.logger.info(f"Published message to {routing_key}")
+
+    async def close(self) -> None:
+        if self.channel and not self.channel.is_closed:
+            await self.channel.close()
+        if self.connection and not self.connection.is_closed:
+            await self.connection.close()
+        self.logger.info("Closed RabbitMQ connection")

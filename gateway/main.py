@@ -4,16 +4,20 @@ import json
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
-from src.app_context import AppContext
+from src.app_context import AsyncAppContext
 import uuid
 from datetime import datetime, timezone
+
+# GLOBALS
+ctx = AsyncAppContext()
 
 
 # Decorator: inject shared AppContext into handlers
 def with_app_context(func):
-    ctx = AppContext()  # One instance shared
 
     async def wrapper(client, message):
+        if ctx.connection is None or ctx.connection.is_closed:
+            await ctx.connect()
         try:
             await func(ctx, client, message)
         except Exception:
@@ -42,7 +46,7 @@ def to_serializable(obj):
 
 # Handler with context injection
 @with_app_context
-async def event_bus_handler(ctx: AppContext, client: Client, message: Message):
+async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Message):
     message_dict = to_serializable(obj=message)
 
     event = {
@@ -52,13 +56,14 @@ async def event_bus_handler(ctx: AppContext, client: Client, message: Message):
         "payload": message_dict,
     }
     json_str = json.dumps(event, indent=2)
-    ctx.safe_publish(
-        exchange='', routing_key='telegram_events', body=json_str)
+    await ctx.safe_publish(
+        routing_key='telegram_events', body=json_str, exchange_name=''
+    )
     ctx.logger.info(json_str)
 
 
 # Background task example
-async def background_task(ctx: AppContext):
+async def background_task(ctx: AsyncAppContext):
     while True:
         ctx.logger.info("Doing other stuff...")
         await asyncio.sleep(5)
@@ -66,7 +71,8 @@ async def background_task(ctx: AppContext):
 
 # Main entry point — directly manages the context lifecycle
 async def main():
-    ctx = AppContext()
+    await ctx.connect()
+
     try:
         ctx.logger.info("Service started")
         telegram_app = Client(
@@ -75,7 +81,7 @@ async def main():
             api_hash=os.environ["TELEGRAM_HASH"]
         )
 
-        ctx.channel.queue_declare(queue='telegram_events', durable=False)
+        await ctx.channel.declare_queue(name='telegram_events', durable=False)
         telegram_app.add_handler(MessageHandler(event_bus_handler))
         await telegram_app.start()
 
@@ -85,7 +91,7 @@ async def main():
         )
     finally:
         await telegram_app.stop()
-        ctx.close()
+        await ctx.close()
 
 
 if __name__ == '__main__':
