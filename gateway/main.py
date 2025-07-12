@@ -87,9 +87,15 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     photo_info = None
     photos = getattr(message, 'photo', None)
     if photos:
-        photo_count = len(photos)
-        largest_photo = photos[-1]
-        photo_info = f"Photo(s): {photo_count}, largest size: {largest_photo.width}x{largest_photo.height}"
+        if isinstance(photos, list):
+            photo_count = len(photos)
+            largest_photo = photos[-1]
+        else:
+            photo_count = 1
+            largest_photo = photos
+        width = getattr(largest_photo, 'width', '?')
+        height = getattr(largest_photo, 'height', '?')
+        photo_info = f"Photo(s): {photo_count}, largest size: {width}x{height}"
 
     # Check for document
     doc_info = None
