@@ -44,7 +44,6 @@ def to_serializable(obj):
         return str(obj)
 
 
-# Handler with context injection
 @with_app_context
 async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Message):
     message_dict = to_serializable(obj=message)
@@ -59,31 +58,50 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     await ctx.safe_publish(
         routing_key='telegram_events', body=json_str, exchange_name=''
     )
-    
+
     # Extract basic info
     user = getattr(message.from_user, 'username', None) or getattr(message.from_user, 'id', 'UnknownUser')
-    text = getattr(message, 'text', None)
+    user_id = getattr(message.from_user, 'id', 'UnknownUser')
     chat_id = getattr(message.chat, 'id', 'UnknownChat')
     chat_type = getattr(message.chat, 'type', 'UnknownType')
-    group_id = chat_id if chat_type in ('group', 'supergroup') else None
-    group_name = getattr(message.chat, 'title', None) if chat_type in ('group', 'supergroup') else None
+    message_id = getattr(message, 'message_id', 'UnknownID')
+    message_time = getattr(message, 'date', None)
+    message_time_str = message_time.isoformat() if message_time else 'UnknownTime'
 
-    # Text preview
-    if text is None:
-        text_preview = "<no text>"
+    # Determine message type
+    if getattr(message, 'sticker', None):
+        message_type = 'sticker'
+    elif getattr(message, 'photo', None):
+        message_type = 'photo'
+    elif getattr(message, 'document', None):
+        message_type = 'document'
+    elif getattr(message, 'video', None):
+        message_type = 'video'
+    elif getattr(message, 'audio', None):
+        message_type = 'audio'
+    elif getattr(message, 'voice', None):
+        message_type = 'voice'
+    elif getattr(message, 'location', None):
+        message_type = 'location'
     else:
-        text_preview = text[:50] + ("..." if len(text) > 50 else "")
+        message_type = 'text'
+
+    # Text or caption preview
+    text = getattr(message, 'text', None)
+    caption = getattr(message, 'caption', None)
+    text_or_caption = text or caption
+    text_preview = text_or_caption[:50] + ("..." if len(text_or_caption) > 50 else "") if text_or_caption else "<no text>"
 
     # Check if reply
     reply_to = None
     if getattr(message, 'reply_to_message', None):
         replied = message.reply_to_message
         reply_user = getattr(replied.from_user, 'username', None) or getattr(replied.from_user, 'id', 'UnknownUser')
-        reply_text = getattr(replied, 'text', '')
+        reply_text = getattr(replied, 'text', '') or getattr(replied, 'caption', '')
         reply_preview = reply_text[:30] + ("..." if len(reply_text) > 30 else "")
         reply_to = f"Reply to {reply_user}: \"{reply_preview}\""
 
-    # Check for photos
+    # Photo info
     photo_info = None
     photos = getattr(message, 'photo', None)
     if photos:
@@ -97,7 +115,7 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
         height = getattr(largest_photo, 'height', '?')
         photo_info = f"Photo(s): {photo_count}, largest size: {width}x{height}"
 
-    # Check for document
+    # Document info
     doc_info = None
     document = getattr(message, 'document', None)
     if document:
@@ -105,7 +123,7 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
         doc_mime = getattr(document, 'mime_type', 'unknown')
         doc_info = f"Document: {doc_name} ({doc_mime})"
 
-    # Check for sticker
+    # Sticker info
     sticker_info = None
     sticker = getattr(message, 'sticker', None)
     if sticker:
@@ -113,24 +131,45 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
         set_name = getattr(sticker, 'set_name', None)
         sticker_info = f"Sticker: {emoji or ''} from set {set_name or 'unknown'}"
 
+    # Location info
+    location_info = None
+    location = getattr(message, 'location', None)
+    if location:
+        lat = getattr(location, 'latitude', '?')
+        lon = getattr(location, 'longitude', '?')
+        location_info = f"Location: {lat}, {lon}"
+
+    # Command info
+    command_info = None
+    if text and text.startswith('/'):
+        command_info = f"Command: {text.split()[0]}"
+
     # Build log parts
     log_parts = [
         f"User: {user}",
-        f"Text: {text_preview}",
+        f"User ID: {user_id}",
+        f"Message ID: {message_id}",
+        f"Message Time: {message_time_str}",
+        f"Chat Type: {chat_type}",
         f"Chat ID: {chat_id}",
-        f"Group ID: {group_id or 'N/A'}",
-        f"Group Name: {group_name or 'N/A'}"
+        f"Message Type: {message_type}",
+        f"Text: {text_preview}",
     ]
 
     if reply_to:
         log_parts.append(reply_to)
+    if command_info:
+        log_parts.append(command_info)
     if photo_info:
         log_parts.append(photo_info)
     if doc_info:
         log_parts.append(doc_info)
     if sticker_info:
         log_parts.append(sticker_info)
+    if location_info:
+        log_parts.append(location_info)
 
+    # Final log
     log_msg = " | ".join(log_parts)
     ctx.logger.info(log_msg)
 
