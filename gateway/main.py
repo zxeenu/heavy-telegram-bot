@@ -69,22 +69,22 @@ async def main():
     ctx = AppContext()
     try:
         ctx.logger.info("Service started")
-        telegramApp = Client(
+        telegram_app = Client(
             "account_session",
             api_id=os.environ["TELEGRAM_ID"],
             api_hash=os.environ["TELEGRAM_HASH"]
         )
 
         ctx.channel.queue_declare(queue='telegram_events', durable=False)
-        telegramApp.add_handler(MessageHandler(event_bus_handler))
-        await telegramApp.start()
+        telegram_app.add_handler(MessageHandler(event_bus_handler))
+        await telegram_app.start()
 
         await asyncio.gather(
             background_task(ctx=ctx),
             asyncio.Event().wait()
         )
     finally:
-        await telegramApp.stop()
+        await telegram_app.stop()
         ctx.close()
 
 
