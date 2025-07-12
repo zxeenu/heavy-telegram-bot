@@ -1,0 +1,10 @@
+services:
+  media:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASS: ${RABBITMQ_PASS}
