@@ -52,7 +52,7 @@ async def event_bus_handler(ctx: AppContext, client: Client, message: Message):
         "payload": message_dict,
     }
     json_str = json.dumps(event, indent=2)
-    ctx.channel.basic_publish(
+    ctx.safe_publish(
         exchange='', routing_key='telegram_events', body=json_str)
     ctx.logger.info(json_str)
 
