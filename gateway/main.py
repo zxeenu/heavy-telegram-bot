@@ -60,7 +60,8 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     )
 
     # Extract basic info
-    user = getattr(message.from_user, 'username', None) or getattr(message.from_user, 'id', 'UnknownUser')
+    user = getattr(message.from_user, 'username', None) or getattr(
+        message.from_user, 'id', 'UnknownUser')
     user_id = getattr(message.from_user, 'id', 'UnknownUser')
     chat_id = getattr(message.chat, 'id', 'UnknownChat')
     chat_type = getattr(message.chat, 'type', 'UnknownType')
@@ -90,15 +91,24 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     text = getattr(message, 'text', None)
     caption = getattr(message, 'caption', None)
     text_or_caption = text or caption
-    text_preview = text_or_caption[:50] + ("..." if len(text_or_caption) > 50 else "") if text_or_caption else "<no text>"
+    text_preview = text_or_caption[:50] + ("..." if len(
+        text_or_caption) > 50 else "") if text_or_caption else "<no text>"
 
     # Check if reply
     reply_to = None
     if getattr(message, 'reply_to_message', None):
         replied = message.reply_to_message
-        reply_user = getattr(replied.from_user, 'username', None) or getattr(replied.from_user, 'id', 'UnknownUser')
-        reply_text = getattr(replied, 'text', '') or getattr(replied, 'caption', '')
-        reply_preview = reply_text[:30] + ("..." if len(reply_text) > 30 else "")
+        reply_user = getattr(replied.from_user, 'username', None) or getattr(
+            replied.from_user, 'id', 'UnknownUser')
+        reply_text = getattr(replied, 'text', None) or getattr(
+            replied, 'caption', None)
+
+        if reply_text:
+            reply_preview = reply_text[:30] + \
+                ("..." if len(reply_text) > 30 else "")
+        else:
+            reply_preview = "<no text>"
+
         reply_to = f"Reply to {reply_user}: \"{reply_preview}\""
 
     # Photo info
@@ -188,7 +198,7 @@ async def main():
     try:
         ctx.logger.info("Service started")
         telegram_app = Client(
-            "account_session",
+            name="account_session",
             api_id=os.environ["TELEGRAM_ID"],
             api_hash=os.environ["TELEGRAM_HASH"]
         )

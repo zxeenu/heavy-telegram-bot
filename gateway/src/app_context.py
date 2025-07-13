@@ -22,10 +22,21 @@ class AsyncAppContext:
         self.channel = None
 
     async def connect(self) -> None:
-        self.connection = await aio_pika.connect_robust(
-            f"amqp://{os.environ['RABBITMQ_USER']}:{os.environ['RABBITMQ_PASS']}@"
-            f"{os.environ['RABBITMQ_HOST']}:{os.environ['RABBITMQ_PORT']}/"
-        )
+
+        # Parse environment variables with sane defaults
+        rabbitmq_user = os.environ.get("RABBITMQ_USER")
+        rabbitmq_pass = os.environ.get("RABBITMQ_PASS")
+        rabbitmq_host = os.environ.get("RABBITMQ_HOST")
+        rabbitmq_port = os.environ.get(
+            "RABBITMQ_PORT")  # ensures it's an integer
+        rabbitmq_vhost = os.environ.get(
+            "RABBITMQ_VHOST", "/")  # optional, default is "/"
+
+        # Construct the connection URL
+        rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_pass}@{rabbitmq_host}:{rabbitmq_port}{rabbitmq_vhost}"
+        self.logger.info(rabbitmq_url)
+
+        self.connection = await aio_pika.connect_robust(rabbitmq_url)
         self.channel = await self.connection.channel()
         self.logger.info("Connected to RabbitMQ (async)")
 
