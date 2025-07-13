@@ -2,12 +2,12 @@ import aio_pika
 import os
 import logging
 from typing import Optional
-
+from aio_pika.abc import AbstractRobustConnection, AbstractRobustChannel
 
 class AsyncAppContext:
     logger: logging.Logger
-    connection: Optional[aio_pika.RobustConnection]
-    channel: Optional[aio_pika.Channel]
+    connection: Optional[AbstractRobustConnection]
+    channel: Optional[AbstractRobustChannel]
 
     def __init__(self) -> None:
         self.logger = logging.getLogger("Gateway")

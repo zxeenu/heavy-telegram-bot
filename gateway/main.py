@@ -49,8 +49,8 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
     message_dict = to_serializable(obj=message)
 
     event = {
-        "type": "telegram.message",
-        "event_id": str(uuid.uuid4()),
+        "type": "events.telegram.raw",
+        "correlation_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": message_dict,
     }
@@ -196,7 +196,7 @@ async def main():
     await ctx.connect()
 
     try:
-        ctx.logger.info("Service started")
+        ctx.logger.info("Gateway Service started")
         telegram_app = Client(
             name="account_session",
             api_id=os.environ["TELEGRAM_ID"],
