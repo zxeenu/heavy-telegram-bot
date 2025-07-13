@@ -34,10 +34,44 @@ The gateway service is a Python application that listens to Telegram events usin
 
 ### Running the Gateway Service
 
-Before starting the gateway service, ensure your infrastructure services are running.
+Before starting the Gateway service, ensure your infrastructure services are running.
 
-You can run the gateway service locally using:
+You can run the Gateway service locally using:
 
 ```bash
 docker-compose -f gateway/docker-compose.yml up -d
+```
+
+## MediaPirate Service
+
+The MediaPirate service is a Python application that listens for events from RabbitMQ. This application will act to be a youtube, tiktok and whatnot downloader.
+
+- Located in the [`media-pirate/`](./media-pirate) directory.
+- See [`gateway/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
+
+### Running the MediaPirate Service
+
+Before starting the MediaPirate service, ensure your infrastructure services are running.
+
+You can run the MediaPirate service locally using:
+
+```bash
+docker-compose -f media-pirate/docker-compose.yml up -d
+```
+
+## Diagram
+
+```mermaid
+flowchart TD
+    T1[Telegram Gateway]
+    M1[MediaPirate]
+
+    T1 -->|raw event| E1((events.telegram.raw))
+    E1 --> M1
+
+    M1 -->|normalize events| E2((commands.tiktok.download))
+    E2 --> M1
+
+    M1 -->|normalized event| E3((commands.telegram.reply))
+    E3 -->|return blob to user| T1
 ```
