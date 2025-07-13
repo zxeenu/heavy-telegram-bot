@@ -47,7 +47,7 @@ docker-compose -f gateway/docker-compose.yml up -d
 The MediaPirate service is a Python application that listens for events from RabbitMQ. This application will act to be a youtube, tiktok and whatnot downloader.
 
 - Located in the [`media-pirate/`](./media-pirate) directory.
-- See [`gateway/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
+- See [`media-pirate/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
 
 ### Running the MediaPirate Service
 
