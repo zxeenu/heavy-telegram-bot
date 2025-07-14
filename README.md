@@ -51,10 +51,10 @@ The MediaPirate service is a Python application that listens for events from Rab
 
 ### Tasks
 
-- [] Handle youtube downloads directly to disk
-- [] Handle file uploading to minio
-- [] Add checks to make sure they are small downloads
-- [] Add big downloads via durable idempotent jobs that can be safely retried
+- [ ] Handle youtube downloads directly to disk
+- [ ] Handle file uploading to minio
+- [ ] Add checks to make sure they are small downloads
+- [ ] Add big downloads via durable idempotent jobs that can be safely retried
 
 ### Supported Command Words
 
@@ -110,8 +110,8 @@ flowchart TD
     %% If direct download fails, push to queue processor
     DD -- fails --> DW
 
-    DD --> E3((commands.telegram.reply))
-    DW --> E3
+    DD -->|success| E3((commands.telegram.reply))
+    DW -->|success| E3
 
     E3 -->|return blob to user| T1
 ```
