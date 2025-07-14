@@ -71,6 +71,10 @@ You can run the MediaPirate service locally using:
 docker-compose -f media-pirate/docker-compose.yml up -d
 ```
 
+## Logger Service
+
+The Logger service is a Golang application that listens to log events from RabbitMQ. This application will serve as a central hub to store logs to find our what is happening in our even choreography.
+
 ## Current
 
 ```mermaid
