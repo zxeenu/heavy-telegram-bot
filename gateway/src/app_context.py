@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 from aio_pika.abc import AbstractRobustConnection, AbstractRobustChannel
 
+
 class AsyncAppContext:
     logger: logging.Logger
     connection: Optional[AbstractRobustConnection]

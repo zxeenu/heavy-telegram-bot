@@ -8,22 +8,9 @@ from src.app_context import AsyncAppContext
 import uuid
 from datetime import datetime, timezone
 
-# GLOBALS
+
+# global singleton
 ctx = AsyncAppContext()
-
-
-# Decorator: inject shared AppContext into handlers
-def with_app_context(func):
-
-    async def wrapper(client, message):
-        if ctx.connection is None or ctx.connection.is_closed:
-            await ctx.connect()
-        try:
-            await func(ctx, client, message)
-        except Exception:
-            ctx.logger.exception("Error in handler")
-            raise
-    return wrapper
 
 
 # Convert message to serializable JSON
@@ -44,8 +31,7 @@ def to_serializable(obj):
         return str(obj)
 
 
-@with_app_context
-async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Message):
+async def event_bus_handler(client: Client, message: Message):
     message_dict = to_serializable(obj=message)
 
     event = {
@@ -185,7 +171,7 @@ async def event_bus_handler(ctx: AsyncAppContext, client: Client, message: Messa
 
 
 # Background task example
-async def background_task(ctx: AsyncAppContext):
+async def background_task():
     while True:
         # ctx.logger.info("Doing other stuff...") # comment out later when doing stuff to propagate messages out
         await asyncio.sleep(5)
@@ -208,7 +194,7 @@ async def main():
         await telegram_app.start()
 
         await asyncio.gather(
-            background_task(ctx=ctx),
+            background_task(),
             asyncio.Event().wait()
         )
     finally:
