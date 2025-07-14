@@ -39,6 +39,7 @@ async def event_bus_handler(client: Client, message: Message):
         "correlation_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": message_dict,
+        "version": 1,
     }
     json_str = json.dumps(event, indent=2)
     await ctx.safe_publish(

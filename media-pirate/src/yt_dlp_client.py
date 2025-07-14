@@ -24,15 +24,16 @@ def update_and_reimport_yt_dlp():
         return yt_dlp  # Return the module if needed
     except Exception as e:
         logger.fatal(f"An error occurred: {e}")
+        return None
 
 
-def download_tiktok_video(url: str, output_path='downloads', reloadlib: bool = False) -> str:
+def download_tiktok_video(url: str, output_path='./downloads', reloadlib: bool = False) -> str:
     if reloadlib:
         importlib.reload(yt_dlp)
 
-    # folder where the script lives
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(base_dir, output_path)
+    # # folder where the script lives
+    # base_dir = os.path.dirname(os.path.abspath(__file__))
+    # output_path = os.path.join(base_dir, output_path)
     os.makedirs(output_path, exist_ok=True)  # ✅ ensure directory exists
 
     md5_hash = hashlib.md5()

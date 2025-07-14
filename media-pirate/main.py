@@ -2,18 +2,9 @@ import asyncio
 from src.app_context import AsyncAppContext
 import json
 import os
-import pprint
-from typing import TypedDict, Optional
-
-
-class NormalizedTelegramPayload(TypedDict):
-    message_id: str
-    text: str
-    filtered_parts: list[str]
-    from_user_id: Optional[int]
-    from_user_name: str
-    reply_to_message_id: Optional[int]
-    reply_text: str
+from typing import Optional
+from src.handlers.dl_command import dl_command
+from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 
 
 ctx = AsyncAppContext()
@@ -44,25 +35,9 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     }
 
 
-async def handle_dl_command(correlation_id: str, event_type: str, timestamp: str, normalized_paylod: NormalizedTelegramPayload) -> None:
-    filtered_parts = normalized_paylod["filtered_parts"]
-    url_from_text: Optional[str] = filtered_parts[1] if len(
-        filtered_parts) > 1 else None
-    url_from_reply = normalized_paylod["reply_text"]
-
-    ctx.logger.info(
-        f"Event id: {correlation_id} is requesting a download for text from url: {url_from_text}")
-
-    ctx.logger.info(
-        f"Event id: {correlation_id} is requesting a download for text from reply: {url_from_reply}")
-
-    # need to check if the url strings are correct next
-    # reply to the first truthy one
-    pass
-
-
+# all telegram commands that are added here should accept the same arguments
 TELEGRAM_COMMAND_HANDLERS = {
-    '.dl': handle_dl_command,
+    '.dl': dl_command,
 }
 
 
@@ -86,9 +61,6 @@ async def main() -> None:
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:
                 async with message.process():
-                    event_type = body.get('type', '')
-                    correlation_id = body.get('correlation_id', '')
-                    timestamp = body.get('timestamp', '')
                     body_str = message.body.decode()
 
                     try:
@@ -103,9 +75,20 @@ async def main() -> None:
                             f"Error processing {correlation_id}: {e}")
                         continue
 
+                    event_type: str = body.get('type', '')
+                    version = int(body.get('version')) if body.get(
+                        'version') is not None else None
+                    correlation_id: str = body.get('correlation_id', '')
+                    timestamp: str = body.get('timestamp', '')
+
+                    if version is None:
+                        ctx.logger.info(
+                            f"Event received id: {correlation_id} does not have a version. Malformed event payload.")
+                        continue
+
                     # Proper formatting with placeholders
                     ctx.logger.info(
-                        f"Event received id: {correlation_id}, type: {event_type}, timestamp: {timestamp}")
+                        f"Event received id: {correlation_id}, type: {event_type}, timestamp: {timestamp}, version: {version}")
                     if event_type == 'events.telegram.raw':
                         payload = body.get('payload', {})
                         data = normalize_telegram_payload(payload)
@@ -149,7 +132,12 @@ async def main() -> None:
                                 f"Event id: {correlation_id} command_word: {command_word} has no associated handler.")
                             continue
 
-                        await handler(correlation_id, event_type, timestamp, data)
+                        try:
+                            await handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                        except Exception:
+                            ctx.logger.exception(
+                                f"Event id: {correlation_id}, handler for {command_word} failed")
+                        continue
 
 
 if __name__ == "__main__":
