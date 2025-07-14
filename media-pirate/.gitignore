@@ -213,3 +213,9 @@ __marimo__/
 *.session
 *.session-shm
 *.session-wal
+
+# Downloads
+/src/downloads
+/src/downloads/*
+/downloads
+/downloads/*

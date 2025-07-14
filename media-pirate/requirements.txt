@@ -11,3 +11,4 @@ setuptools==75.6.0
 smmap==5.0.2
 typing_extensions==4.14.1
 yarl==1.20.1
+yt-dlp
