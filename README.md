@@ -49,6 +49,18 @@ The MediaPirate service is a Python application that listens for events from Rab
 - Located in the [`media-pirate/`](./media-pirate) directory.
 - See [`media-pirate/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
 
+### Tasks
+
+- [] Handle youtube downloads directly to disk
+- [] Handle file uploading to minio
+- [] Add checks to make sure they are small downloads
+- [] Add big downloads via durable idempotent jobs that can be safely retried
+
+### Supported Command Words
+
+- `.dl` followed by a valid url, and a download will be attempted
+- `.dl` replied to a valid url, and a download will be attempted
+
 ### Running the MediaPirate Service
 
 Before starting the MediaPirate service, ensure your infrastructure services are running.
@@ -59,7 +71,7 @@ You can run the MediaPirate service locally using:
 docker-compose -f media-pirate/docker-compose.yml up -d
 ```
 
-## Diagram
+## Current
 
 ```mermaid
 flowchart TD
@@ -73,5 +85,33 @@ flowchart TD
     E2 --> M1
 
     M1 -->|normalized event| E3((commands.telegram.reply))
+    E3 -->|return blob to user| T1
+```
+
+## Planned
+
+```mermaid
+flowchart TD
+    T1[Telegram Gateway]
+    M1["MediaPirate - Event Processor"]
+
+    T1 -->|raw event| E1((events.telegram.raw))
+    E1 --> M1
+
+    M1 --> E2((commands.tiktok.download))
+
+    %% Internal branching inside MediaPirate command handler
+    E2 -->|small download| DD["Direct Download Handler"]
+    E2 -->|large download| DW["Download Worker - Queue Processor"]
+
+    %% Retry loop for Download Worker
+    DW -->|retry on fail| DW
+
+    %% If direct download fails, push to queue processor
+    DD -- fails --> DW
+
+    DD --> E3((commands.telegram.reply))
+    DW --> E3
+
     E3 -->|return blob to user| T1
 ```
