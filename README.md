@@ -2,24 +2,24 @@
 
 ## Project Overview
 
-This repository contains the core infrastructure and multiple microservices/apps for our event-driven Telegram ecosystem.
+This repository contains the core infrastructure and microservices for an event-driven Telegram bot ecosystem. The project is intentionally overengineered — an experiment in distributed systems and event choreography using modern tooling.
 
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
 
-- [`infra/docker-compose.yml`](./infra/docker-compose.infra.yml)
+- [`infra/docker-compose.yml`](./infra/docker-compose.yml)
 
 This includes:
 
-- RabbitMQ (message broker)
-- Redis (cache and ephemeral store)
-- MinIO (object storage)
-- RedisInsight (Redis UI)
+- 📨 **RabbitMQ** — Message broker
+- 🧠 **Redis** — Cache and ephemeral data store
+- 💾 **MinIO** — S3-compatible object storage
+- 🧭 **RedisInsight** — Redis UI for debugging and introspection
 
 ### Starting Infrastructure
 
-Run the following command to start all infra services after setting up the envs:
+Ensure you’ve configured the necessary environment variables, then start the services:
 
 ```bash
 docker-compose -f infra/docker-compose.yml up -d
@@ -27,16 +27,14 @@ docker-compose -f infra/docker-compose.yml up -d
 
 ## Gateway Service
 
-The gateway service is a Python application that listens to Telegram events using Hydrogram and publishes these events into RabbitMQ.
+The Gateway service is a Python application that listens to Telegram events using Hydrogram and publishes them to RabbitMQ.
 
 - Located in the [`gateway/`](./gateway) directory.
 - See [`gateway/README.md`](./gateway/README.md) for detailed setup and usage instructions.
 
 ### Running the Gateway Service
 
-Before starting the Gateway service, ensure your infrastructure services are running.
-
-You can run the Gateway service locally using:
+Make sure the infrastructure is running first, then start the Gateway:
 
 ```bash
 docker-compose -f gateway/docker-compose.yml up -d
@@ -44,28 +42,26 @@ docker-compose -f gateway/docker-compose.yml up -d
 
 ## MediaPirate Service
 
-The MediaPirate service is a Python application that listens for events from RabbitMQ. This application will act to be a youtube, tiktok and whatnot downloader.
+MediaPirate is a Python service that consumes Telegram-related events from RabbitMQ and handles downloads from platforms like YouTube and TikTok.
 
 - Located in the [`media-pirate/`](./media-pirate) directory.
 - See [`media-pirate/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
 
-### Tasks
+### Task Roadmap
 
-- [ ] Handle youtube downloads directly to disk
-- [ ] Handle file uploading to minio
-- [ ] Add checks to make sure they are small downloads
-- [ ] Add big downloads via durable idempotent jobs that can be safely retried
+- [ x ] Handle YouTube downloads directly to disk
+- [ ] Upload downloaded files to MinIO
+- [ ] Enforce file size limits for small downloads
+- [ ] Implement durable, idempotent jobs for large downloads with retry support
 
 ### Supported Command Words
 
-- `.dl` followed by a valid url, and a download will be attempted
-- `.dl` replied to a valid url, and a download will be attempted
+- `.dl <url>` — Download a file from a given URL
+- `.dl` (as a reply) — Download a file from the replied message
 
 ### Running the MediaPirate Service
 
-Before starting the MediaPirate service, ensure your infrastructure services are running.
-
-You can run the MediaPirate service locally using:
+Ensure infrastructure is running before starting:
 
 ```bash
 docker-compose -f media-pirate/docker-compose.yml up -d
@@ -73,9 +69,9 @@ docker-compose -f media-pirate/docker-compose.yml up -d
 
 ## Logger Service
 
-The Logger service is a Golang application that listens to log events from RabbitMQ. This application will serve as a central hub to store logs to find our what is happening in our event choreography.
+The Logger service is a Go application that listens to log events from RabbitMQ and stores them centrally. It provides visibility into system behavior across services and helps monitor event choreography.
 
-## Current
+## 🧩 Current Flow
 
 ```mermaid
 flowchart TD
@@ -92,7 +88,7 @@ flowchart TD
     E3 -->|return blob to user| T1
 ```
 
-## Planned
+## 🚧 Planned Flow
 
 ```mermaid
 flowchart TD
