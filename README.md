@@ -49,7 +49,7 @@ MediaPirate is a Python service that consumes Telegram-related events from Rabbi
 
 ### Task Roadmap
 
-- [ x ] Handle YouTube downloads directly to disk
+- [x] Handle YouTube downloads directly to disk
 - [ ] Upload downloaded files to MinIO
 - [ ] Enforce file size limits for small downloads
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
