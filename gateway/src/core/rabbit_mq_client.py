@@ -3,59 +3,17 @@ import os
 import logging
 from typing import Optional
 from aio_pika.abc import AbstractRobustConnection, AbstractRobustChannel
-from src.core.logging_context import get_correlation_id
 
 
-class ContextualColorFormatter(logging.Formatter):
-    RESET = "\033[0m"
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    CYAN = "\033[36m"
-    MAGENTA = "\033[35m"
-
-    LEVEL_COLOR = {
-        "DEBUG": CYAN,
-        "INFO": GREEN,
-        "WARNING": YELLOW,
-        "ERROR": RED,
-        "CRITICAL": MAGENTA,
-    }
-
-    # def format(self, record):
-    #     # Inject correlation_id into log record, fallback to "-"
-    #     record.correlation_id = get_correlation_id()
-    #     return super().format(record)
-
-    def format(self, record):
-        color = self.LEVEL_COLOR.get(record.levelname, self.RESET)
-        record.correlation_id = get_correlation_id()
-        # Inject color codes around levelname and logger name
-        record.levelname = f"{color}{record.levelname}{self.RESET}"
-        record.name = f"{self.BLUE}{record.name}{self.RESET}"
-
-        return super().format(record)
-
-
-class ServiceContainer:
-    logger: logging.Logger
+class RabbitMqClient:
     connection: Optional[AbstractRobustConnection]
     channel: Optional[AbstractRobustChannel]
+    logger: logging.Logger
 
-    def __init__(self, log_level: int = logging.INFO, log_name="") -> None:
-        self.logger = logging.getLogger(log_name)
-        self.logger.setLevel(log_level)
-
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = ContextualColorFormatter(
-                "[%(name)s] [%(asctime)s] [%(levelname)s] [corr_id=%(correlation_id)s] %(message)s"
-            )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+    def __init__(self, logger: logging.Logger) -> None:
         self.connection = None
         self.channel = None
+        self.logger = logger
 
     async def connect(self) -> None:
 
@@ -81,7 +39,7 @@ class ServiceContainer:
         self.channel = await self.connection.channel()
         self.logger.info("Connected to RabbitMQ (async)")
 
-        # Optionally declare queues here if you want
+        # Optionally declare queues here if you want...
         # await self.channel.declare_queue('telegram_events', durable=False)
 
     async def safe_publish(self, routing_key: str, body: str, exchange_name: str = '') -> None:

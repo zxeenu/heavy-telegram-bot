@@ -4,3 +4,7 @@
 
 - MQRabbit
   - `python3 -m pip install aio-pika`
+- DI
+  - `python3 -m pip install dependency-injector`
+- Injector
+  - `python3 -m pip install injector`

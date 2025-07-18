@@ -4,18 +4,19 @@ import os
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
-from src.core.service_container import ServiceContainer
 import uuid
 from datetime import datetime, timezone
+from injector import Injector
+from src.core.app_module import AppModule
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
+from src.core.rabbit_mq_client import RabbitMqClient
 
 
-# global singleton
-ctx = ServiceContainer(log_name="Gateway", log_level=logging.INFO)
+# # global app service container
+injector = Injector([AppModule()])
 
 
-# Convert message to serializable JSON
 def to_serializable(obj):
     if isinstance(obj, (str, int, float, bool)) or obj is None:
         return obj
@@ -34,6 +35,8 @@ def to_serializable(obj):
 
 
 async def event_bus_handler(client: Client, message: Message):
+    rabbit_mq = injector.get(RabbitMqClient)
+    logger = injector.get(logging.Logger)
 
     correlation_id = str(uuid.uuid4())
     set_correlation_id(correlation_id)
@@ -46,7 +49,7 @@ async def event_bus_handler(client: Client, message: Message):
                           version=1)
     event_as_json = event.to_json()
 
-    await ctx.safe_publish(
+    await rabbit_mq.safe_publish(
         routing_key='telegram_events', body=event_as_json, exchange_name=''
     )
 
@@ -172,7 +175,7 @@ async def event_bus_handler(client: Client, message: Message):
 
     # Final log
     log_msg = " | ".join(log_parts)
-    ctx.logger.info(log_msg)
+    logger.info(log_msg)
 
 
 # Background task example
@@ -184,17 +187,19 @@ async def background_task():
 
 # Main entry point — directly manages the context lifecycle
 async def main():
-    await ctx.connect()
+    rabbit_mq = injector.get(RabbitMqClient)
+    logger = injector.get(logging.Logger)
+    await rabbit_mq.connect()
 
     try:
-        ctx.logger.info("Gateway Service started")
+        logger.info("Gateway Service started")
         telegram_app = Client(
             name="account_session",
             api_id=os.environ["TELEGRAM_ID"],
             api_hash=os.environ["TELEGRAM_HASH"]
         )
 
-        await ctx.channel.declare_queue(name='telegram_events', durable=False)
+        await rabbit_mq.channel.declare_queue(name='telegram_events', durable=False)
         telegram_app.add_handler(MessageHandler(event_bus_handler))
         await telegram_app.start()
 
@@ -204,7 +209,7 @@ async def main():
         )
     finally:
         await telegram_app.stop()
-        await ctx.close()
+        await rabbit_mq.close()
 
 
 if __name__ == '__main__':
