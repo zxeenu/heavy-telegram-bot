@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import os
-import json
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
-from src.core.app_context import AsyncAppContext
+from src.core.service_container import ServiceContainer
 import uuid
 from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
@@ -13,7 +12,7 @@ from src.core.logging_context import set_correlation_id
 
 
 # global singleton
-ctx = AsyncAppContext(log_name="Gateway", log_level=logging.INFO)
+ctx = ServiceContainer(log_name="Gateway", log_level=logging.INFO)
 
 
 # Convert message to serializable JSON

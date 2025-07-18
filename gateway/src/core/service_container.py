@@ -38,7 +38,7 @@ class ContextualColorFormatter(logging.Formatter):
         return super().format(record)
 
 
-class AsyncAppContext:
+class ServiceContainer:
     logger: logging.Logger
     connection: Optional[AbstractRobustConnection]
     channel: Optional[AbstractRobustChannel]
