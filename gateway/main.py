@@ -1,16 +1,19 @@
 import asyncio
+import logging
 import os
 import json
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
-from src.app_context import AsyncAppContext
+from src.core.app_context import AsyncAppContext
 import uuid
 from datetime import datetime, timezone
+from src.core.event_envelope import EventEnvelope
+from src.core.logging_context import set_correlation_id
 
 
 # global singleton
-ctx = AsyncAppContext()
+ctx = AsyncAppContext(log_name="Gateway", log_level=logging.INFO)
 
 
 # Convert message to serializable JSON
@@ -32,18 +35,20 @@ def to_serializable(obj):
 
 
 async def event_bus_handler(client: Client, message: Message):
-    message_dict = to_serializable(obj=message)
 
-    event = {
-        "type": "events.telegram.raw",
-        "correlation_id": str(uuid.uuid4()),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": message_dict,
-        "version": 1,
-    }
-    json_str = json.dumps(event, indent=2)
+    correlation_id = str(uuid.uuid4())
+    set_correlation_id(correlation_id)
+
+    message_dict = to_serializable(obj=message)
+    event = EventEnvelope(type="events.telegram.raw",
+                          correlation_id=correlation_id,
+                          timestamp=datetime.now(timezone.utc).isoformat(),
+                          payload=message_dict,
+                          version=1)
+    event_as_json = event.to_json()
+
     await ctx.safe_publish(
-        routing_key='telegram_events', body=json_str, exchange_name=''
+        routing_key='telegram_events', body=event_as_json, exchange_name=''
     )
 
     # Extract basic info
