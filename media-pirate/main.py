@@ -1,13 +1,16 @@
 import asyncio
-from src.app_context import AsyncAppContext
+import logging
 import json
 import os
 from typing import Optional
+from src.core.logging_context import set_correlation_id
+from src.core.service_container import ServiceContainer
 from src.handlers.dl_command import dl_command
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 
 
-ctx = AsyncAppContext()
+# global singleton
+ctx = ServiceContainer(log_name="MediaPirate", log_level=logging.INFO)
 
 
 def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
@@ -67,12 +70,12 @@ async def main() -> None:
                         body = json.loads(body_str)
                     except json.JSONDecodeError:
                         ctx.logger.error(
-                            f"Invalid JSON in message: {correlation_id}")
+                            f"Invalid JSON in message")
                         # Do something with the malformed JSON's later
                         continue
                     except Exception as e:
                         ctx.logger.error(
-                            f"Error processing {correlation_id}: {e}")
+                            f"Error processing: {e}")
                         continue
 
                     event_type: str = body.get('type', '')
@@ -81,62 +84,57 @@ async def main() -> None:
                     correlation_id: str = body.get('correlation_id', '')
                     timestamp: str = body.get('timestamp', '')
 
+                    set_correlation_id(correlation_id)
+
                     if version is None:
                         ctx.logger.info(
-                            f"Event received id: {correlation_id} does not have a version. Malformed event payload.")
+                            f"Event does not have a version. Malformed event payload.")
                         continue
 
                     # Proper formatting with placeholders
-                    ctx.logger.info(
-                        f"Event received id: {correlation_id}, type: {event_type}, timestamp: {timestamp}, version: {version}")
+
                     if event_type == 'events.telegram.raw':
                         payload = body.get('payload', {})
                         data = normalize_telegram_payload(payload)
 
-                        message_id = data["message_id"]
-                        from_user_name = data["from_user_name"]
+                        ctx.logger.info(
+                            f"Event received successfully",
+                            extra=data)
+
                         from_user_id = data["from_user_id"]
 
                         # pprint.pprint(payload, indent=2, width=60)
                         # ctx.logger.info(payload)
 
-                        reply_to_message_id = data["reply_to_message_id"]
-                        reply_text = data["reply_text"]
-
-                        ctx.logger.info(
-                            f"Event id: {correlation_id}, user_id: {from_user_name} user_name: {from_user_id}, message_id: {message_id}")
-                        ctx.logger.info(
-                            f"Event id: {correlation_id}, reply_to_message_id: {reply_to_message_id} reply_text: {reply_text}")
-
                         if from_user_id not in allowed_user_ids:
                             ctx.logger.info(
-                                f"Event id: {correlation_id} does not originate from an allowed user. Abort")
+                                f"Does not originate from an allowed user. Aborting")
                             continue
 
                         filtered_parts = data["filtered_parts"]
                         ctx.logger.info(
-                            f"Event id: {correlation_id} originates from allowed user. Parts: {filtered_parts}")
+                            f"Originates from allowed user. Parts: {filtered_parts}")
 
                         command_word: Optional[str] = filtered_parts[0] if filtered_parts else None
                         ctx.logger.info(
-                            f"Event id: {correlation_id} command_word: {command_word}")
+                            f"Command_word: {command_word} found!")
 
                         if not command_word:
                             ctx.logger.info(
-                                f"Event id: {correlation_id} does not have any actionable keywords")
+                                f"Does not have any actionable keywords")
                             continue
 
                         handler = TELEGRAM_COMMAND_HANDLERS.get(command_word)
                         if handler is None:
                             ctx.logger.warning(
-                                f"Event id: {correlation_id} command_word: {command_word} has no associated handler.")
+                                f"Command_word: {command_word} has no associated handler.")
                             continue
 
                         try:
                             await handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
                         except Exception:
                             ctx.logger.exception(
-                                f"Event id: {correlation_id}, handler for {command_word} failed")
+                                f"Handler for {command_word} invocation failed")
                         continue
 
 

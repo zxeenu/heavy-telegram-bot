@@ -14,6 +14,7 @@ class ContextualColorFormatter(logging.Formatter):
     BLUE = "\033[34m"
     CYAN = "\033[36m"
     MAGENTA = "\033[35m"
+    GRAY = "\033[90m"
 
     LEVEL_COLOR = {
         "DEBUG": CYAN,
@@ -23,19 +24,37 @@ class ContextualColorFormatter(logging.Formatter):
         "CRITICAL": MAGENTA,
     }
 
-    # def format(self, record):
-    #     # Inject correlation_id into log record, fallback to "-"
-    #     record.correlation_id = get_correlation_id()
-    #     return super().format(record)
+    STANDARD_ATTRS = logging.LogRecord(
+        name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
+    ).__dict__.keys()
 
     def format(self, record):
-        color = self.LEVEL_COLOR.get(record.levelname, self.RESET)
+        # Add correlation ID
         record.correlation_id = get_correlation_id()
-        # Inject color codes around levelname and logger name
+
+        # Colorize levelname and logger name
+        color = self.LEVEL_COLOR.get(record.levelname, self.RESET)
         record.levelname = f"{color}{record.levelname}{self.RESET}"
         record.name = f"{self.BLUE}{record.name}{self.RESET}"
 
-        return super().format(record)
+        # Get base log message
+        base_message = super().format(record)
+
+        # Extract custom extras
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in self.STANDARD_ATTRS and k != "message"
+        }
+
+        # Format extras nicely
+        if extras:
+            max_key_len = max(len(k) for k in extras)
+            extra_lines = "\n".join(
+                f"    {self.GRAY}{k.ljust(max_key_len)}{self.RESET} = {v!r}" for k, v in extras.items()
+            )
+            return f"{base_message}\n{self.CYAN}Extras:{self.RESET}\n{extra_lines}"
+        else:
+            return base_message
 
 
 class ServiceContainer:

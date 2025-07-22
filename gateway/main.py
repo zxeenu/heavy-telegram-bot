@@ -140,39 +140,26 @@ async def event_bus_handler(client: Client, message: Message):
         lon = getattr(location, 'longitude', '?')
         location_info = f"Location: {lat}, {lon}"
 
-    # Command info
-    command_info = None
-    if text and text.startswith('/'):
-        command_info = f"Command: {text.split()[0]}"
+    # Collect structured log context
+    extras = {
+        "user": user,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "message_time_str": message_time_str,
+        "chat_type": chat_type,
+        "message_type": message_type,
+        "text_preview": text_preview,
+        "location_info": location_info,
+        "sticker_info": sticker_info,
+        "doc_info": doc_info,
+        "photo_info": photo_info,
+        "reply_to": reply_to
+    }
 
-    # Build log parts
-    log_parts = [
-        f"User: {user}",
-        f"User ID: {user_id}",
-        f"Message ID: {message_id}",
-        f"Message Time: {message_time_str}",
-        f"Chat Type: {chat_type}",
-        f"Chat ID: {chat_id}",
-        f"Message Type: {message_type}",
-        f"Text: {text_preview}",
-    ]
-
-    if reply_to:
-        log_parts.append(reply_to)
-    if command_info:
-        log_parts.append(command_info)
-    if photo_info:
-        log_parts.append(photo_info)
-    if doc_info:
-        log_parts.append(doc_info)
-    if sticker_info:
-        log_parts.append(sticker_info)
-    if location_info:
-        log_parts.append(location_info)
-
-    # Final log
-    log_msg = " | ".join(log_parts)
-    ctx.logger.info(log_msg)
+    # Optionally filter out None values for a cleaner log
+    filtered_extras = {k: v for k, v in extras.items() if v is not None}
+    ctx.logger.info("Message sent to event bus!", extra=filtered_extras)
 
 
 # Background task example
@@ -183,7 +170,7 @@ async def background_task():
 
 
 # Main entry point — directly manages the context lifecycle
-async def main():
+async def main() -> None:
     await ctx.connect()
 
     try:
