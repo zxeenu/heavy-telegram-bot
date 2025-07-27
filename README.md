@@ -56,6 +56,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] JSON Schema implementation
 - [ ] Implement rate limiting to prevent users from spamming the service
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
+- [ ] Add support for dynamically allowing other users to interact with certain functionality
 
 ### Running the Gateway Service
 
