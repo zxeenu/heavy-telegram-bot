@@ -2,6 +2,8 @@ import aio_pika
 import os
 import logging
 from typing import Optional
+from minio import Minio
+from minio.error import S3Error
 from aio_pika.abc import AbstractRobustConnection, AbstractRobustChannel
 from src.core.logging_context import get_correlation_id
 
@@ -61,6 +63,7 @@ class ServiceContainer:
     logger: logging.Logger
     connection: Optional[AbstractRobustConnection]
     channel: Optional[AbstractRobustChannel]
+    minio: Minio
 
     def __init__(self, log_level: int = logging.INFO, log_name="") -> None:
         self.logger = logging.getLogger(log_name)
@@ -75,6 +78,14 @@ class ServiceContainer:
             self.logger.addHandler(handler)
         self.connection = None
         self.channel = None
+
+        secure = os.environ.get("S3_SECURE", "false").lower() in ("true")
+        self.minio = Minio(
+            endpoint=os.environ.get("S3_ENDPOINT"),
+            access_key=os.environ.get("S3_ACCESS_KEY"),
+            secret_key=os.environ.get("S3_SECRET_KEY"),
+            secure=secure
+        )
 
     async def connect(self) -> None:
 
