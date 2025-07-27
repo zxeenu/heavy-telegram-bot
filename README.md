@@ -4,6 +4,14 @@
 
 This repository contains the core infrastructure and microservices for an event-driven Telegram bot ecosystem. The project is intentionally overengineered — an experiment in distributed systems and event choreography using modern tooling.
 
+## Getting Started
+
+1. Start the infrastructure
+2. Start the Gateway
+3. Start MediaPirate
+
+You should now be able to interact with the bot via Telegram.
+
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
@@ -30,10 +38,24 @@ docker-compose -f infra/docker-compose.yml up -d
 > **📤 Event Publisher**  
 > Listens to Telegram events and publishes them into RabbitMQ.
 
+### What it is
+
 The Gateway service is a Python application that listens to Telegram events using Hydrogram and publishes them to RabbitMQ.
 
 - Located in the [`gateway/`](./gateway) directory.
 - See [`gateway/README.md`](./gateway/README.md) for detailed setup and usage instructions.
+
+### Key features
+
+- Associating logs with correlation IDs handling using `contextvars`
+
+### Task Roadmap
+
+- [x] Listen for video downloads events, and upload from minio into telegram
+- [ ] Optimize video uploading, by reusing documents already in telegram
+- [ ] JSON Schema implementation
+- [ ] Implement rate limiting to prevent users from spamming the service
+- [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 
 ### Running the Gateway Service
 
@@ -48,17 +70,27 @@ docker-compose -f gateway/docker-compose.yml up -d
 > **📥 Event Subscriber & Event Publisher**  
 > Consumes raw events from RabbitMQ and processes or delegates them.
 
-MediaPirate is a Python service that consumes Telegram-related events from RabbitMQ and handles downloads from platforms like YouTube and TikTok.
+### What it is
+
+Media Pirate is a distributed content relay and command system designed to experiment with messaging patterns, service orchestration, and multi-user sync.
 
 - Located in the [`media-pirate/`](./media-pirate) directory.
 - See [`media-pirate/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
 
+### Key features
+
+- Associating logs with correlation IDs handling using `contextvars`
+- Injecting `correlation_id` received from Gateway for inter-service context-aware logging
+- Will not redownload a video that has been hoarded in object storage
+
 ### Task Roadmap
 
 - [x] Handle YouTube downloads directly to disk
-- [ ] Upload downloaded files to MinIO
+- [x] Upload downloaded files to MinIO
 - [ ] Enforce file size limits for small downloads
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
+- [ ] JSON Schema implementation (cross-service payload validations)
+- [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 
 ### Supported Command Words
 
