@@ -249,6 +249,7 @@ async def background_task(telegram_app: Client):
                                     if resp.status != 200:
                                         ctx.logger.error(
                                             "Failed to download video.")
+                                        continue
                                     else:
                                         # Make sure the folder exists
                                         os.makedirs(os.path.dirname(
