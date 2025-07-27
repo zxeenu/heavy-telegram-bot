@@ -57,6 +57,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Implement rate limiting to prevent users from spamming the service
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
+- [ ] Implement service health heartbeat via redis ttl
 
 ### Running the Gateway Service
 
@@ -92,6 +93,7 @@ Media Pirate is a distributed content relay and command system designed to exper
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
 - [ ] JSON Schema implementation (cross-service payload validations)
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
+- [ ] Implement service health heartbeat via redis ttl
 
 ### Supported Command Words
 
