@@ -1,14 +1,20 @@
 import asyncio
+import hashlib
+import json
 import logging
 import os
+from typing import Optional
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
+import urllib
 from src.core.service_container import ServiceContainer
 import uuid
 from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
+import aiohttp
+import aiofiles
 
 
 # global singleton
@@ -163,10 +169,109 @@ async def event_bus_handler(client: Client, message: Message):
 
 
 # Background task example
-async def background_task():
-    while True:
-        # ctx.logger.info("Doing other stuff...") # comment out later when doing stuff to propagate messages out
-        await asyncio.sleep(5)
+async def background_task(telegram_app: Client):
+
+    async with ctx.connection as connection:
+        channel = await connection.channel()
+
+        queue = await channel.declare_queue(
+            name='telegram_events',
+            auto_delete=False
+        )
+
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    body_str = message.body.decode()
+
+                    try:
+                        body = json.loads(body_str)
+                    except json.JSONDecodeError:
+                        ctx.logger.error(
+                            f"Invalid JSON in message")
+                        # Do something with the malformed JSON's later
+                        continue
+                    except Exception as e:
+                        ctx.logger.error(
+                            f"Error processing: {e}")
+                        continue
+
+                    event_type: str = body.get('type', '')
+                    version = int(body.get('version')) if body.get(
+                        'version') is not None else None
+                    correlation_id: str = body.get('correlation_id', '')
+                    timestamp: str = body.get('timestamp', '')
+
+                    set_correlation_id(correlation_id)
+
+                    if version is None:
+                        ctx.logger.info(
+                            f"Event does not have a version. Malformed event payload.")
+                        continue
+
+                    # Proper formatting with placeholders
+
+                    if event_type == 'events.dl.video.ready':
+                        payload = body.get('payload', {})
+                        ctx.logger.info(
+                            f"Event received successfully",
+                            extra={
+                                'data': payload
+                            })
+
+                        pre_signed_url: Optional[str] = payload.get(
+                            'presigned_url', '')
+                        message_id: Optional[str] = payload.get(
+                            'message_id', '')
+                        chat_id: Optional[str] = payload.get(
+                            'chat_id', '')
+
+                        if not all([pre_signed_url, message_id, chat_id]):
+                            ctx.logger.error(
+                                "Malformed payload. Aborting...")
+                            return
+
+                        parsed = urllib.parse.urlparse(pre_signed_url)
+                        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+                        # Generate SHA-256-based object name
+                        object_name = hashlib.sha256(
+                            base_url.encode()).hexdigest()
+
+                        # Define the file path (same directory or use a specific folder)
+                        # you can use "." if not using a subfolder
+                        file_path = os.path.join("downloads", object_name)
+
+                        # Check if file already exists
+                        if not os.path.exists(file_path):
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(pre_signed_url) as resp:
+                                    if resp.status != 200:
+                                        ctx.logger.error(
+                                            "Failed to download video.")
+                                    else:
+                                        # Make sure the folder exists
+                                        os.makedirs(os.path.dirname(
+                                            file_path), exist_ok=True)
+
+                                        # Write to file
+                                        async with aiofiles.open(file_path, "wb") as f:
+                                            await f.write(await resp.read())
+                                        ctx.logger.info(
+                                            "File written to downloads directory.")
+                        else:
+                            ctx.logger.info(
+                                f"File already exists: {file_path}")
+
+                        ctx.logger.info(payload)
+                        # await telegram_app.send_message("me", "this is a reply", reply_to_message_id=message_id)
+                        # Keep track of the progress while uploading
+
+                        # TODO: keep track of documents uploaded to teleegram, so we can reuse them
+
+                        async def progress(current, total):
+                            ctx.logger.info(f"{current * 100 / total:.1f}%")
+                        await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded...')
 
 
 # Main entry point — directly manages the context lifecycle
@@ -186,7 +291,7 @@ async def main() -> None:
         await telegram_app.start()
 
         await asyncio.gather(
-            background_task(),
+            background_task(telegram_app),
             asyncio.Event().wait()
         )
     finally:

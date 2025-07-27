@@ -16,6 +16,7 @@ ctx = ServiceContainer(log_name="MediaPirate", log_level=logging.INFO)
 def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     from_user = payload.get('from_user') or {}
     reply_to_message = payload.get('reply_to_message') or {}
+    chat = payload.get('chat') or {}
 
     try:
         from_user_id = int(from_user.get('id')) if from_user.get(
@@ -23,12 +24,18 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     except (TypeError, ValueError):
         from_user_id = None
 
+    try:
+        chat_id = int(chat.get('id')) if chat.get('id') is not None else None
+    except (TypeError, ValueError):
+        chat_id = None
+
     text = str(payload.get('text') or '')
     parts = text.split()
     filtered_parts = list(filter(None, parts))
 
     return {
         "message_id": payload.get('id', ''),
+        "chat_id": chat_id,
         "text": text,
         "filtered_parts": filtered_parts,
         "from_user_id": from_user_id,

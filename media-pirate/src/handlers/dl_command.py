@@ -16,12 +16,15 @@ def extract_url(*candidates: Optional[str]) -> Optional[str]:
     return None
 
 
-async def publish_presigned_event(ctx, correlation_id, presigned_url):
+async def publish_presigned_event(ctx, correlation_id, presigned_url, payload: NormalizedTelegramPayload,):
     event = EventEnvelope(
         type="events.dl.video.ready",
         correlation_id=correlation_id,
         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        payload={"presigned_url": presigned_url},
+        payload={"presigned_url": presigned_url,
+                 'message_id': payload["message_id"],
+                 'chat_id': payload["chat_id"]
+                 },
         version=1
     )
     await ctx.safe_publish(
@@ -85,8 +88,8 @@ async def dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str
             object_name=f"{filename_stub}.mp4",
             expires=datetime.timedelta(minutes=5)
         )
-        await publish_presigned_event(ctx, correlation_id, presigned_url)
-        ctx.logger.info("Published download.ready event",
+        await publish_presigned_event(ctx, correlation_id, presigned_url, payload=payload)
+        ctx.logger.info("Published events.dl.video.ready event",
                         extra={"presigned_url": presigned_url})
         return
     except S3Error as e:
@@ -115,12 +118,7 @@ async def dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str
         expires=datetime.timedelta(minutes=5)  # or minutes=15 etc.
     )
 
-    presigned_url = minio.presigned_get_object(
-        bucket_name=bucket_name,
-        object_name=f"{filename_stub}.mp4",
-        expires=datetime.timedelta(minutes=5)
-    )
-    await publish_presigned_event(ctx, correlation_id, presigned_url)
+    await publish_presigned_event(ctx, correlation_id, presigned_url, payload=payload)
 
     try:
         os.remove(path_to_file)
@@ -128,6 +126,6 @@ async def dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str
         ctx.logger.warning("Failed to clean up temp file",
                            extra={"error": str(e)})
 
-    ctx.logger.info("Published download.ready event",
+    ctx.logger.info("Published events.dl.video.ready event",
                     extra={"presigned_url": presigned_url})
     return
