@@ -44,7 +44,13 @@ async def event_bus_handler(client: Client, message: Message):
     correlation_id = str(uuid.uuid4())
     set_correlation_id(correlation_id)
 
-    message_dict = to_serializable(obj=message)
+    try:
+        message_dict = to_serializable(obj=message)
+        ctx.logger.info(f"Message serialized successfully: {message_dict}")
+    except Exception as e:
+        ctx.logger.error(f"Failed to serialize message: {e}")
+        return
+    
     event = EventEnvelope(type="events.telegram.raw",
                           correlation_id=correlation_id,
                           timestamp=datetime.now(timezone.utc).isoformat(),
@@ -268,7 +274,7 @@ async def background_task(telegram_app: Client):
                         # await telegram_app.send_message("me", "this is a reply", reply_to_message_id=message_id)
                         # Keep track of the progress while uploading
 
-                        # TODO: keep track of documents uploaded to teleegram, so we can reuse them
+                        # TODO: keep track of documents uploaded to telegram, so we can reuse them
 
                         async def progress(current, total):
                             ctx.logger.info(f"{current * 100 / total:.1f}%")
