@@ -15,6 +15,7 @@ from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
 import aiohttp
 import aiofiles
+import signal
 
 
 # global singleton
@@ -50,7 +51,7 @@ async def event_bus_handler(client: Client, message: Message):
     except Exception as e:
         ctx.logger.error(f"Failed to serialize message: {e}")
         return
-    
+
     event = EventEnvelope(type="events.telegram.raw",
                           correlation_id=correlation_id,
                           timestamp=datetime.now(timezone.utc).isoformat(),
@@ -250,11 +251,18 @@ async def background_task(telegram_app: Client):
 
                         # Check if file already exists
                         if not os.path.exists(file_path):
-                            async with aiohttp.ClientSession() as session:
+
+                            timeout = aiohttp.ClientTimeout(total=60)
+                            async with aiohttp.ClientSession(timeout=timeout) as session:
                                 async with session.get(pre_signed_url) as resp:
                                     if resp.status != 200:
                                         ctx.logger.error(
                                             "Failed to download video.")
+
+                                        # lets just add this back into the event queue
+                                        # or we could add something like tenecity for code level retries
+                                        # potentially celery to do durable retries. we could raise jobs to handle these events instead of doing it via epehemeral events
+
                                         continue
                                     else:
                                         # Make sure the folder exists
@@ -281,8 +289,7 @@ async def background_task(telegram_app: Client):
                         await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded...')
 
 
-# Main entry point — directly manages the context lifecycle
-async def main() -> None:
+async def run_gateway(shutdown_event: asyncio.Event) -> None:
     await ctx.connect()
 
     try:
@@ -290,21 +297,53 @@ async def main() -> None:
         telegram_app = Client(
             name="account_session",
             api_id=os.environ["TELEGRAM_ID"],
-            api_hash=os.environ["TELEGRAM_HASH"]
+            api_hash=os.environ["TELEGRAM_HASH"],
+            app_version=os.environ["TELEGRAM_APP_VERSION"],
+            system_version=os.environ["TELEGRAM_SYSTEM_VERSION"],
+            device_model=os.environ["TELEGRAM_DEVICE_MODEL"]
         )
 
         await ctx.channel.declare_queue(name='telegram_events', durable=False)
         telegram_app.add_handler(MessageHandler(event_bus_handler))
         await telegram_app.start()
 
-        await asyncio.gather(
-            background_task(telegram_app),
-            asyncio.Event().wait()
-        )
+        ctx.logger.info("All services started, waiting for shutdown signal...")
+
+        # Create background task
+        background_task_obj = asyncio.create_task(
+            background_task(telegram_app))
+
+        # Wait for shutdown signal
+        await shutdown_event.wait()
+
+       # Cancel background task
+        background_task_obj.cancel()
+        try:
+            await background_task_obj
+        except asyncio.CancelledError:
+            pass
+
     finally:
+        ctx.logger.info("Shutting down gracefully...")
         await telegram_app.stop()
         await ctx.close()
 
+
+# Main entry point — directly manages the context lifecycle
+async def main() -> None:
+    # Global shutdown event
+    shutdown_event = asyncio.Event()
+
+    def signal_handler():
+        """Signal handler function"""
+        ctx.logger.info("Received shutdown signal (Ctrl+C)")
+        shutdown_event.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler)
+
+    await run_gateway(shutdown_event=shutdown_event)
 
 if __name__ == '__main__':
     asyncio.run(main())
