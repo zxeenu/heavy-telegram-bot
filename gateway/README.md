@@ -2,7 +2,7 @@
 
 ## Setting Up
 
-### 📦 Environment Variables
+### Environment Variables
 
 Before starting, make sure to create a `.env` file with the required API keys.
 
@@ -17,7 +17,7 @@ TELEGRAM_ID=your_telegram_api_id
 TELEGRAM_HASH=your_telegram_api_hash
 ```
 
-## 🛠️ Notes
+## Development Notes
 
 If your dev container starts acting up and you can't edit files, try fixing permissions:
 
