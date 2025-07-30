@@ -4,7 +4,7 @@
 
 ### Environment Variables
 
-Before starting, make sure to create a `.env` file with the required API keys.
+Before starting, create a `.env` file in the root of the project with your Telegram API credentials.
 
 #### 🔑 Getting Keys
 
@@ -19,10 +19,12 @@ TELEGRAM_HASH=your_telegram_api_hash
 
 ## Development Notes
 
-If your dev container starts acting up and you can't edit files, try fixing permissions:
+This project uses Visual Studio Code Dev Containers for a seamless development experience. Once your `.env` is set, you should be good to go.
+
+#### 🐞 Dev Container Permission Issues?
+
+If your dev container starts acting up and you can't edit files, try fixing the file ownership:
 
 ```bash
 sudo chown -R vscode:vscode .
 ```
-
-Just paste that into your Markdown file and you're good to go.
