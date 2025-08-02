@@ -1,20 +1,16 @@
 import asyncio
-import hashlib
 import json
 import logging
 import os
-from typing import Optional
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
-import urllib
 from src.core.service_container import ServiceContainer
 import uuid
 from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
-import aiohttp
-import aiofiles
+from src.handlers.video_ready_event import video_ready
 
 
 # global singleton
@@ -41,27 +37,6 @@ def to_serializable(obj):
 
 async def event_bus_handler(client: Client, message: Message):
 
-    correlation_id = str(uuid.uuid4())
-    set_correlation_id(correlation_id)
-
-    try:
-        message_dict = to_serializable(obj=message)
-        ctx.logger.info(f"Message serialized successfully: {message_dict}")
-    except Exception as e:
-        ctx.logger.error(f"Failed to serialize message: {e}")
-        return
-    
-    event = EventEnvelope(type="events.telegram.raw",
-                          correlation_id=correlation_id,
-                          timestamp=datetime.now(timezone.utc).isoformat(),
-                          payload=message_dict,
-                          version=1)
-    event_as_json = event.to_json()
-
-    await ctx.safe_publish(
-        routing_key='telegram_events', body=event_as_json, exchange_name=''
-    )
-
     # Extract basic info
     user = getattr(message.from_user, 'username', None) or getattr(
         message.from_user, 'id', 'UnknownUser')
@@ -71,6 +46,37 @@ async def event_bus_handler(client: Client, message: Message):
     message_id = getattr(message, 'message_id', 'UnknownID')
     message_time = getattr(message, 'date', None)
     message_time_str = message_time.isoformat() if message_time else 'UnknownTime'
+
+    admin_user_id = int(os.environ["TELEGRAM_ADMIN_USER_ID"])
+
+    # allowed_user_ids = set([admin_user_id])
+    authorized: bool = False
+
+    if admin_user_id == user_id:
+        authorized = True
+
+    correlation_id = str(uuid.uuid4())
+
+    set_correlation_id(correlation_id)
+
+    if authorized:
+        try:
+            message_dict = to_serializable(obj=message)
+            # ctx.logger.info(f"Message serialized successfully: {message_dict}")
+        except Exception as e:
+            ctx.logger.error(f"Failed to serialize message: {e}")
+            return
+
+        event = EventEnvelope(type="events.telegram.raw",
+                              correlation_id=correlation_id,
+                              timestamp=datetime.now(timezone.utc).isoformat(),
+                              payload=message_dict,
+                              version=1)
+        event_as_json = event.to_json()
+
+        await ctx.safe_publish(
+            routing_key='telegram_events', body=event_as_json, exchange_name=''
+        )
 
     # Determine message type
     if getattr(message, 'sticker', None):
@@ -171,17 +177,20 @@ async def event_bus_handler(client: Client, message: Message):
 
     # Optionally filter out None values for a cleaner log
     filtered_extras = {k: v for k, v in extras.items() if v is not None}
-    ctx.logger.info("Message sent to event bus!", extra=filtered_extras)
+
+    if authorized:
+        ctx.logger.info("Message sent to event bus!", extra=filtered_extras)
+    else:
+        ctx.logger.warning("Message skipped", extra=filtered_extras)
 
 
 # Background task example
 async def background_task(telegram_app: Client):
-
     async with ctx.connection as connection:
         channel = await connection.channel()
 
         queue = await channel.declare_queue(
-            name='telegram_events',
+            name='gateway_events',
             auto_delete=False
         )
 
@@ -212,73 +221,21 @@ async def background_task(telegram_app: Client):
 
                     if version is None:
                         ctx.logger.info(
-                            f"Event does not have a version. Malformed event payload.")
+                            "Event does not have a version. Malformed event payload.")
                         continue
 
-                    # Proper formatting with placeholders
+                    match event_type:
+                        case 'events.dl.video.ready':
+                            await video_ready(
+                                ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
 
-                    if event_type == 'events.dl.video.ready':
-                        payload = body.get('payload', {})
-                        ctx.logger.info(
-                            f"Event received successfully",
-                            extra={
-                                'data': payload
-                            })
-
-                        pre_signed_url: Optional[str] = payload.get(
-                            'presigned_url', '')
-                        message_id: Optional[str] = payload.get(
-                            'message_id', '')
-                        chat_id: Optional[str] = payload.get(
-                            'chat_id', '')
-
-                        if not all([pre_signed_url, message_id, chat_id]):
-                            ctx.logger.error(
-                                "Malformed payload. Aborting...")
-                            return
-
-                        parsed = urllib.parse.urlparse(pre_signed_url)
-                        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-
-                        # Generate SHA-256-based object name
-                        object_name = hashlib.sha256(
-                            base_url.encode()).hexdigest()
-
-                        # Define the file path (same directory or use a specific folder)
-                        # you can use "." if not using a subfolder
-                        file_path = os.path.join("downloads", object_name)
-
-                        # Check if file already exists
-                        if not os.path.exists(file_path):
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(pre_signed_url) as resp:
-                                    if resp.status != 200:
-                                        ctx.logger.error(
-                                            "Failed to download video.")
-                                        continue
-                                    else:
-                                        # Make sure the folder exists
-                                        os.makedirs(os.path.dirname(
-                                            file_path), exist_ok=True)
-
-                                        # Write to file
-                                        async with aiofiles.open(file_path, "wb") as f:
-                                            await f.write(await resp.read())
-                                        ctx.logger.info(
-                                            "File written to downloads directory.")
-                        else:
-                            ctx.logger.info(
-                                f"File already exists: {file_path}")
-
-                        ctx.logger.info(payload)
-                        # await telegram_app.send_message("me", "this is a reply", reply_to_message_id=message_id)
-                        # Keep track of the progress while uploading
-
-                        # TODO: keep track of documents uploaded to telegram, so we can reuse them
-
-                        async def progress(current, total):
-                            ctx.logger.info(f"{current * 100 / total:.1f}%")
-                        await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded...')
+                        # Add more cases here as needed
+                        case _:
+                            ctx.logger.warning(
+                                "Unknown event_type received.", extra={
+                                    event_type: event_type
+                                })
+                            pass
 
 
 # Main entry point — directly manages the context lifecycle
@@ -286,7 +243,7 @@ async def main() -> None:
     await ctx.connect()
 
     try:
-        ctx.logger.info("Gateway Service started")
+        ctx.logger.info("Gateway Service started!")
         telegram_app = Client(
             name="account_session",
             api_id=os.environ["TELEGRAM_ID"],

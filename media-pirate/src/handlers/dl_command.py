@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import mimetypes
 import os
 from typing import Literal, Optional
 from src.core.event_envelope import EventEnvelope
@@ -7,6 +8,54 @@ from src.core.service_container import ServiceContainer
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 from src.yt_dlp_client import download_tiktok_video
 from minio.error import S3Error
+from urllib.parse import urlparse
+from urllib.parse import quote
+
+
+def sanitize_metadata(meta: dict) -> dict:
+    sanitized = {}
+    for k, v in meta.items():
+        if not isinstance(v, str):
+            v = str(v)
+        k = k.lower()
+        sanitized[k] = quote(v, safe='')
+    return sanitized
+
+
+def get_cleaned_url(url: str) -> str:
+    """Remove query parameters and normalize URL for consistent hashing"""
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url)
+    # Remove query parameters and fragment
+    cleaned = urlunparse((
+        parsed.scheme,
+        parsed.netloc.lower(),  # Normalize domain case
+        parsed.path.rstrip('/'),  # Remove trailing slashes
+        '',  # No params
+        '',  # No query
+        ''   # No fragment
+    ))
+    return cleaned
+
+
+def generate_friendly_filename(url: str, extension: str, hash_prefix: str = None) -> str:
+    """Generate a user-friendly filename from URL"""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+
+        # Try to extract meaningful name from URL
+        if 'tiktok.com' in parsed.netloc:
+            return f"tiktok_{hash_prefix or 'video'}{extension}"
+        elif 'youtube.com' in parsed.netloc or 'youtu.be' in parsed.netloc:
+            return f"youtube_{hash_prefix or 'video'}{extension}"
+        elif 'instagram.com' in parsed.netloc:
+            return f"instagram_{hash_prefix or 'video'}{extension}"
+        else:
+            return f"download_{hash_prefix or 'file'}{extension}"
+    except:
+        return f"download_{hash_prefix or 'file'}{extension}"
 
 
 def extract_url(*candidates: Optional[str]) -> Optional[str]:
@@ -16,7 +65,7 @@ def extract_url(*candidates: Optional[str]) -> Optional[str]:
     return None
 
 
-async def publish_presigned_event(ctx, correlation_id, presigned_url, payload: NormalizedTelegramPayload,):
+async def publish_presigned_event(ctx: ServiceContainer, correlation_id: str, presigned_url: str, payload: NormalizedTelegramPayload,):
     event = EventEnvelope(
         type="events.dl.video.ready",
         correlation_id=correlation_id,
@@ -28,13 +77,13 @@ async def publish_presigned_event(ctx, correlation_id, presigned_url, payload: N
         version=1
     )
     await ctx.safe_publish(
-        routing_key='telegram_events',
+        routing_key='gateway_events',
         body=event.to_json(),
         exchange_name=''
     )
 
 
-async def dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
+async def video_dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
     minio = ctx.minio
     bucket_name = os.environ.get("S3_BUCKET_NAME")
 
@@ -73,53 +122,123 @@ async def dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str
         f"Proceeding to download.",
         extra={"url": url, "mode": mode})
 
-    hash_url = hashlib.sha256(url.encode()).hexdigest()
-    filename_stub = hash_url  # We'll add extension after downloading
+    # Content-addressable key (no extension)
+    cleaned_url = get_cleaned_url(url)
+    hash_url = hashlib.sha256(cleaned_url.encode()).hexdigest()
 
     # Check if file already exists in MinIO
     try:
-        # Optional: use wildcard match if not hardcoded
-        minio.stat_object(bucket_name, f"{filename_stub}.mp4")
-        ctx.logger.info("File already exists in MinIO. Skipping download and upload.",
-                        extra={"object_name": f"{filename_stub}.mp4"})
+        stat_result = minio.stat_object(bucket_name, hash_url)
 
+        # Extract file info from metadata
+        extension = stat_result.metadata.get('x-amz-meta-extension', '.mp4')
+        mime_type = stat_result.metadata.get(
+            'x-amz-meta-content-type', 'video/mp4')
+        original_filename = stat_result.metadata.get(
+            'x-amz-meta-original-name', f'video{extension}')
+        original_url = stat_result.metadata.get(
+            'x-amz-meta-original-url', 'unknown')
+        cleaned_url = stat_result.metadata.get(
+            'x-amz-meta-cleaned-url', 'unknown')
+
+        ctx.logger.info("File already exists in MinIO. Skipping download.",
+                        extra={
+                            "object_name": hash_url,
+                            "extension": extension,
+                            "mime_type": mime_type,
+                            "original_url": original_url,
+                            "cleaned_url": cleaned_url
+                        })
+
+        # Generate presigned URL with proper content disposition
         presigned_url = minio.presigned_get_object(
             bucket_name=bucket_name,
-            object_name=f"{filename_stub}.mp4",
-            expires=datetime.timedelta(minutes=5)
+            object_name=hash_url,
+            expires=datetime.timedelta(minutes=5),
+            response_headers={
+                'Content-Type': mime_type,
+                'Content-Disposition': f'attachment; filename="{original_filename}"'
+            }
         )
+
         await publish_presigned_event(ctx, correlation_id, presigned_url, payload=payload)
         ctx.logger.info("Published events.dl.video.ready event",
                         extra={"presigned_url": presigned_url})
         return
+
     except S3Error as e:
         if e.code != "NoSuchKey":
             raise
         ctx.logger.info("File not found in MinIO. Proceeding to download.",
                         extra={"url": url})
 
+    # Download the file
     path_to_file = download_tiktok_video(url=url)
-    ctx.logger.info(
-        f"File downloaded", extra={"path_to_file": path_to_file})
+    ctx.logger.info("File downloaded", extra={"path_to_file": path_to_file})
 
-    # ext includes the dot, e.g., ".mp4"
+    # Extract file information
     _, ext = os.path.splitext(path_to_file)
-    hashed_filename = hash_url + ext
 
-    minio.fput_object(bucket_name=bucket_name,
-                      object_name=hashed_filename,
-                      file_path=path_to_file)
-    ctx.logger.info("File uploaded to MinIO", extra={
-                    "object_name": hashed_filename})
+    # Determine MIME type
+    mime_type, _ = mimetypes.guess_type(path_to_file)
 
+    if mime_type is None:
+        # Fallback based on extension
+        mime_type = {
+            '.mp4': 'video/mp4',
+            '.webm': 'video/webm',
+            '.mkv': 'video/x-matroska',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.m4a': 'audio/mp4',
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav'
+        }.get(ext.lower(), 'application/octet-stream')
+
+    # Generate a nice filename for downloads
+    original_filename = generate_friendly_filename(url, ext, hash_url[:8])
+
+    # Get the cleaned URL (what we actually hashed)
+    cleaned_url = get_cleaned_url(url)  # Remove query params, normalize
+
+    raw_meta = {
+        'extension': ext,
+        # 'content-type': mime_type, # breaks it for some reason
+        'original-name': original_filename,
+        'source-url-hash': hash_url,
+        'download-timestamp': timestamp,
+        'original-url': url,
+        'cleaned-url': cleaned_url,
+        'url-domain': urlparse(url).netloc
+    }
+
+    metadata = sanitize_metadata(raw_meta)
+
+    # Upload with comprehensive metadata
+    minio.fput_object(
+        bucket_name=bucket_name,
+        object_name=hash_url,  # Clean hash, no extension
+        file_path=path_to_file,
+        content_type=mime_type,  # Set proper content type on object
+        metadata=metadata
+    )
+
+    ctx.logger.info("File uploaded to MinIO", extra=metadata)
+
+    # Generate presigned URL with proper headers
     presigned_url = minio.presigned_get_object(
         bucket_name=bucket_name,
-        object_name=hashed_filename,
-        expires=datetime.timedelta(minutes=5)  # or minutes=15 etc.
+        object_name=hash_url,
+        expires=datetime.timedelta(minutes=5),
+        response_headers={
+            'Content-Type': mime_type,
+            'Content-Disposition': f'attachment; filename="{original_filename}"'
+        }
     )
 
     await publish_presigned_event(ctx, correlation_id, presigned_url, payload=payload)
 
+    # Cleanup
     try:
         os.remove(path_to_file)
     except OSError as e:
