@@ -12,6 +12,16 @@ This repository contains the core infrastructure and microservices for an event-
 
 You should now be able to interact with the bot via Telegram.
 
+## Architecture Decisions
+
+- **Event Choreography over Orchestration** - Services react to events independently
+- **Saga Pattern** - Distributed workflow without central coordinator
+- **Interest Accumulation** - An approach to handling concurrent requests
+
+### Interest Accumulation
+
+When multiple users request the same media file, we track their interest via a shared Redis key (based on content hash or normalized URL). Once the download completes, all interested parties are notified. This prevents duplicate downloads and reduces resource use.
+
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
@@ -57,10 +67,18 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Implement rate limiting to prevent users from spamming the service
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
-- [ ] Implement service health heartbeat via redis ttl
 - [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
 - [ ] Implement rate limiting
+- [ ] Implement OpenTelemetry with `contextvars` correlation support
+- [ ] Implement Redis TTL-based heartbeat for service health
+
+### To Be Supported Command Words
+
+- `.grace 30d?` — Allow a chat to interact with the bot forever, or with an optional TTL
+- `.bless @<username> 30d?` — Bless user for 30 days, with an optional TTL
+- `.hammer @<username> 1h?` — Temporary ban, with an optional TTL
+- `.smite` — Permanent ban from bot interactions for everyone in chat forever (no TTL)
 
 ### Running the Gateway Service
 
@@ -97,8 +115,9 @@ Media Pirate is a distributed content relay and command system designed to exper
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
 - [ ] JSON Schema implementation (cross-service payload validations)
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
-- [ ] Implement service health heartbeat via redis ttl
-- [ ] Handle race condition. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties. -> when i receive a download event, first i put make a key via the object's future name, and i put the arguments it will need for the gateway output. and then... if a second person downloads the same source, we check, and then also put the arguments of the file in the second interacting in the values for this key. so now we have 1 key, that maps to 2 telegram replies. when the download is done, i just need to publish a reply to everyhting. i dont have to lock anything. its eventful.
+- [ ] Handle race condition via interest accumulation. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties.
+- [ ] Implement OpenTelemetry with `contextvars` correlation support
+- [ ] Implement Redis TTL-based heartbeat for service health
 
 ### Supported Command Words
 
