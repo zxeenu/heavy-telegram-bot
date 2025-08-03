@@ -103,8 +103,21 @@ Media Pirate is a distributed content relay and command system designed to exper
 
 - Associating logs with correlation IDs handling using `contextvars`
 - Injecting `correlation_id` received from Gateway for inter-service context-aware logging
+- Content-Based Addressing for object storage
 - Fetching from youtube, tiktok is handled in an idempotent manner
 - Enriches stored documents with meta data for future analytics
+
+#### Content-Based Addressing
+
+This project uses a content-based addressing strategy to deduplicate downloads and maintain consistency across services. Each media object is identified by a unique hash derived from the normalized source URL (with query parameters stripped) and the extraction type (audio or video). This allows media derived from the same URL — but with different formats or intents — to be treated as distinct entities.
+
+The content hash is used to:
+
+- Uniquely identify media across services
+- Prevent redundant downloads/uploads
+- Store files in MinIO under type-scoped paths: audio/<hash>.mp3 and video/<hash>.mp4
+
+The full source URL and normalized form are preserved as metadata to ensure traceability, support introspection, and allow for future normalization improvements.
 
 ### Task Roadmap
 
