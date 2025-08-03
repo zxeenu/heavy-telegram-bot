@@ -22,6 +22,14 @@ You should now be able to interact with the bot via Telegram.
 
 When multiple users request the same media file, we track their interest via a shared Redis key (based on content hash or normalized URL). Once the download completes, all interested parties are notified. This prevents duplicate downloads and reduces resource use.
 
+## Security Model
+
+- Gateway authenticates all incoming requests.
+- Correlation IDs, user metadata, or scoped access tokens are attached to events at this boundary.
+- Internal services trust messages from the Gateway (or each other) and do not perform redundant authentication.
+
+This approach simplifies each worker’s responsibility and centralizes control.
+
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
@@ -60,6 +68,12 @@ The Gateway service is a Python application that listens to Telegram events usin
 - Associating logs with correlation IDs handling using `contextvars`
 - Compute time taken for event to be be received into Gateway and dispatched out of Gateway
 
+#### Rate limiting (🚧 PLANNED)
+
+Strategy: Fixed Window Rate Limiting with TTL
+
+This strategy limits how many actions a user can perform within a fixed time window. It uses a Redis key per user (e.g. rate:user:<id>) to count requests. The counter resets after a set TTL (e.g. 60 seconds), allowing automatic cleanup. If the request count exceeds the allowed limit during the window, further requests are denied until the TTL expires.
+
 ### Task Roadmap
 
 - [x] Listen for video downloads events, and upload from minio into telegram
@@ -73,7 +87,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
 
-### To Be Supported Command Words
+### Supported Command Words (🚧 PLANNED)
 
 - `.grace <30d?>` — Allow a chat to interact with the bot forever, or with an optional TTL
 - `.bless @<username> <30d?>` — Bless user for 30 days, with an optional TTL

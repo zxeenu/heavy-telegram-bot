@@ -111,9 +111,6 @@ async def main() -> None:
                             # pprint.pprint(payload, indent=2, width=60)
                             # ctx.logger.info(payload)
                             filtered_parts = data.get("filtered_parts", [])
-                            ctx.logger.info("Originates from allowed user.", extra={
-                                            "filtered_parts": filtered_parts})
-
                             command_word: Optional[str] = filtered_parts[0] if filtered_parts else None
                             ctx.logger.info("Command word located.", extra={
                                             "command_word": command_word})
