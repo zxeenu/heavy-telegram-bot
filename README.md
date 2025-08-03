@@ -65,7 +65,6 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Optimize video uploading, by reusing documents already in telegram
 - [ ] JSON Schema implementation
 - [ ] Implement rate limiting to prevent users from spamming the service
-- [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
@@ -75,10 +74,10 @@ The Gateway service is a Python application that listens to Telegram events usin
 
 ### To Be Supported Command Words
 
-- `.grace 30d?` — Allow a chat to interact with the bot forever, or with an optional TTL
-- `.bless @<username> 30d?` — Bless user for 30 days, with an optional TTL
-- `.hammer @<username> 1h?` — Temporary ban, with an optional TTL
+- `.grace <30d?>` — Allow a chat to interact with the bot forever, or with an optional TTL
+- `.bless @<username> <30d?>` — Bless user for 30 days, with an optional TTL
 - `.smite` — Permanent ban from bot interactions for everyone in chat forever (no TTL)
+- `.hammer @<username> <1h?>` — Temporary ban, with an optional TTL
 
 ### Running the Gateway Service
 
@@ -114,7 +113,6 @@ Media Pirate is a distributed content relay and command system designed to exper
 - [ ] Enforce file size limits for small downloads
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
 - [ ] JSON Schema implementation (cross-service payload validations)
-- [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Handle race condition via interest accumulation. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties.
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
