@@ -48,7 +48,6 @@ The Gateway service is a Python application that listens to Telegram events usin
 ### Key features
 
 - Associating logs with correlation IDs handling using `contextvars`
-- Handles basic authentication
 
 ### Task Roadmap
 
@@ -59,6 +58,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [ ] Implement service health heartbeat via redis ttl
+- [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
 - [ ] Implement rate limiting
 
@@ -86,7 +86,8 @@ Media Pirate is a distributed content relay and command system designed to exper
 
 - Associating logs with correlation IDs handling using `contextvars`
 - Injecting `correlation_id` received from Gateway for inter-service context-aware logging
-- Will not redownload a video that has been hoarded in object storage
+- Fetching from youtube, tiktok is handled in an idempotent manner
+- Enriches stored documents with meta data for future analytics
 
 ### Task Roadmap
 
@@ -97,6 +98,7 @@ Media Pirate is a distributed content relay and command system designed to exper
 - [ ] JSON Schema implementation (cross-service payload validations)
 - [ ] Implement Open Telemetry (use the correlation ids already being propagated via `contextvars`)
 - [ ] Implement service health heartbeat via redis ttl
+- [ ] Handle race condition. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties. -> when i receive a download event, first i put make a key via the object's future name, and i put the arguments it will need for the gateway output. and then... if a second person downloads the same source, we check, and then also put the arguments of the file in the second interacting in the values for this key. so now we have 1 key, that maps to 2 telegram replies. when the download is done, i just need to publish a reply to everyhting. i dont have to lock anything. its eventful.
 
 ### Supported Command Words
 
