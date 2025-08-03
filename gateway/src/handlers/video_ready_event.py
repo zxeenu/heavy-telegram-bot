@@ -65,7 +65,6 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         ctx.logger.info(
             f"File already exists: {file_path}")
 
-    ctx.logger.info(payload)
     # await telegram_app.send_message("me", "this is a reply", reply_to_message_id=message_id)
     # Keep track of the progress while uploading
 
