@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-This repository contains the core infrastructure and microservices for an event-driven Telegram bot ecosystem. The project is intentionally overengineered — an experiment in distributed systems and event choreography using modern tooling.
+This repository contains the core infrastructure and microservices for an event-driven Telegram user-bot ecosystem. The project is intentionally overengineered — an experiment in distributed systems and event choreography using modern tooling.
+
+⚠️ This project logs in as a user account using MTProto. Be aware that using userbots may violate Telegram’s terms of service. Use responsibly and at your own risk.
 
 ## Getting Started
 
@@ -229,7 +231,7 @@ flowchart TD
     Commands{Commands}
     Results{Results}
 
-    Gateway -->|events.telegram.raw<br/>🔐 authenticated| MediaPirate
+    Gateway -->|events.telegram.raw<br>🔐 authenticated| MediaPirate
     MediaPirate --> Commands
     Commands -->|commands.media.video_download<br/>commands.media.audio_download| MediaPirate
     MediaPirate --> Results
