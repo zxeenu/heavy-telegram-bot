@@ -30,6 +30,41 @@ When multiple users request the same media file, we track their interest via a s
 
 This approach simplifies each worker’s responsibility and centralizes control.
 
+## Insights
+
+### Event-Driven Architecture & React is Surpassingly Similar
+
+Event-based programming has a remarkably similar feel to React programming. Both paradigms share fundamental patterns that make the mental model transferable:
+
+#### Unidirectional Data Flow
+
+- React: Props flow down, events bubble up through component hierarchy
+- Event Systems: Events flow through message queues, responses bubble back through services
+
+#### Event Handling
+
+- React: So many ways to do it. `onClick` to handle user click events. `useEffect` to react to changes in reactive state. Most of these functions don't return anything, they just do.
+- Event systems: subscribers listen to events, and do something. It doesnt make sense to return anything when its event based, you just pass it to to the next step in the flow, or end the process.
+
+#### Global State Management
+
+- React: You want to share life up reactive state to share in different parts of your application tree, you react out for `context` and implement it with a setter and a getter.
+- Event Systems: Redis for state management. You can do the set and get keys just the same. But its more powerful, you can set automatic cleanups with TTL (You do have similar ability to clean up functionality in React via returning a cleanup function in a `useEffect`).
+
+#### Event Propagation
+
+- React: Event bubbling through the DOM tree with `stopPropagation()` control
+- RabbitMQ: Exchange types (direct, fanout, topic) for controlling event distribution patterns. You can change whether multiple consumers receives the same event, or whether they disappear after an event has been touched by a subscriber.
+
+#### Composition
+
+- React: You can separate out functionality via `hooks` and `components`. Encapsulated boxes that take props and output behavior or UI. Components can be dumb (they don't do business logic, and just react to props) or they can be smart (they take care of business logic, calling endpoints, handling toast notifications)
+- Microservices: Break out functionality into its own service. They can either dumbly call other events to handle logic it cant do, or they can take care of everything.
+
+This mental models transfer suggests that frontend developers already possess much of the conceptual framework needed for distributed systems architecture. The shift from "what happens when a button is clicked?" to "what happens when an event is published?" feels very natural.
+
+Both types of programming have similar reactive event-driven flows.
+
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
@@ -89,6 +124,7 @@ This strategy limits how many actions a user can perform within a fixed time win
 
 ### Supported Command Words (🚧 PLANNED)
 
+- `.whoami` — tells the user their current status (banned, blessed, or unmolested)
 - `.grace <30d?>` — Allow a chat to interact with the bot forever, or with an optional TTL
 - `.bless @<username> <30d?>` — Bless user for 30 days, with an optional TTL
 - `.smite` — Permanent ban from bot interactions for everyone in chat forever (no TTL)
@@ -144,6 +180,7 @@ The full source URL and normalized form are preserved as metadata to ensure trac
 - [ ] Handle race condition via interest accumulation. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties.
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
+- [ ] Reuse downloaded files when doing audio extraction (if a video exists inside the bucket)
 
 ### Supported Command Words
 
