@@ -32,7 +32,7 @@ This approach simplifies each worker’s responsibility and centralizes control.
 
 ## Insights
 
-### Event-Driven Architecture & React is Surpassingly Similar
+### Event-Driven Architecture & React Development is Surpassingly Similar
 
 Event-based programming has a remarkably similar feel to React programming. Both paradigms share fundamental patterns that make the mental model transferable:
 
@@ -43,13 +43,13 @@ Event-based programming has a remarkably similar feel to React programming. Both
 
 #### Event Handling
 
-- React: So many ways to do it. `onClick` to handle user click events. `useEffect` to react to changes in reactive state. Most of these functions don't return anything, they just do.
+- React: So many ways to do it. `onClick` to handle user click events. `useEffect` to react to changes in reactive state. Most of these functions don't return anything, they just do things.
 - Event systems: subscribers listen to events, and do something. It doesnt make sense to return anything when its event based, you just pass it to to the next step in the flow, or end the process.
 
 #### Global State Management
 
-- React: You want to share life up reactive state to share in different parts of your application tree, you react out for `context` and implement it with a setter and a getter.
-- Event Systems: Redis for state management. You can do the set and get keys just the same. But its more powerful, you can set automatic cleanups with TTL (You do have similar ability to clean up functionality in React via returning a cleanup function in a `useEffect`).
+- React: You want to share life up reactive state to share in different parts of your application tree, you reach out for `context` and implement it with a setter and a getter.
+- Event Systems: Redis for state management. You can do the set and get keys just the same. But its more powerful, you can set automatic cleanups with TTL (You do have similar ability to clean up in React via returning a cleanup function in a `useEffect`).
 
 #### Event Propagation
 
