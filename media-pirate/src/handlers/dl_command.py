@@ -360,7 +360,7 @@ async def audio_dl_command(ctx: ServiceContainer, correlation_id: str, event_typ
                         extra={"url": url})
 
     # Download the file
-    path_to_file = download_video(url=url)
+    path_to_file = download_audio(url=url)
     ctx.logger.info("File downloaded", extra={"path_to_file": path_to_file})
 
     # Extract file information
