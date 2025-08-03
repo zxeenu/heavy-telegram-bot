@@ -101,7 +101,7 @@ async def publish_presigned_audio_ready_event(ctx: ServiceContainer, correlation
     )
 
 
-async def video_dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
+async def video_dl_command_handler(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
     minio = ctx.minio
     bucket_name = os.environ.get("S3_BUCKET_NAME")
 
@@ -269,7 +269,7 @@ async def video_dl_command(ctx: ServiceContainer, correlation_id: str, event_typ
     return
 
 
-async def audio_dl_command(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
+async def audio_dl_command_handler(ctx: ServiceContainer, correlation_id: str, event_type: str, timestamp: str, version: int, payload: NormalizedTelegramPayload) -> None:
     minio = ctx.minio
     bucket_name = os.environ.get("S3_BUCKET_NAME")
 

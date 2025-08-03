@@ -5,7 +5,7 @@ from typing import Optional
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
 from src.core.service_container import ServiceContainer
-from src.handlers.dl_command import video_dl_command, audio_dl_command
+from src.handlers.dl_command import video_dl_command_handler, audio_dl_command_handler
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 from datetime import datetime, timezone
 
@@ -146,7 +146,7 @@ async def main() -> None:
                                 'payload', {})
                             data = normalize_telegram_payload(payload)
                             try:
-                                await video_dl_command(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                                await video_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
                             except Exception:
                                 ctx.logger.exception(
                                     "Handler invocation failed")
@@ -156,7 +156,7 @@ async def main() -> None:
                                 'payload', {})
                             data = normalize_telegram_payload(payload)
                             try:
-                                await audio_dl_command(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                                await audio_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
                             except Exception:
                                 ctx.logger.exception(
                                     "Handler invocation failed")

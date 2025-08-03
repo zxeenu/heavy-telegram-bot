@@ -82,7 +82,7 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         human_readable = humanize.precisedelta(elapsed_seconds, format="%0.3f")
         message_for_response = f"Downloaded in {human_readable}"
 
-        ctx.logger.info("Audio processed", extra={
+        ctx.logger.info("Video processed", extra={
             "start_time": start_unix,
             "now_time": now_unix,
             "elapsed": human_readable,
