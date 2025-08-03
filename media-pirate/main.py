@@ -4,7 +4,7 @@ import json
 from typing import Optional
 from src.core.logging_context import set_correlation_id
 from src.core.service_container import ServiceContainer
-from src.handlers.dl_command import video_dl_command
+from src.handlers.dl_command import video_dl_command, audio_dl_command
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 
 
@@ -62,6 +62,8 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
 # all telegram commands that are added here should accept the same arguments
 TELEGRAM_COMMAND_HANDLERS = {
     '.vdl': video_dl_command,
+    '.adl': audio_dl_command,
+
 }
 
 

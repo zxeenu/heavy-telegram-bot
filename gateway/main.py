@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
+from src.handlers.audio_ready_event import audio_ready
 from src.handlers.video_ready_event import video_ready
 
 
@@ -227,6 +228,9 @@ async def background_task(telegram_app: Client):
                     match event_type:
                         case 'events.dl.video.ready':
                             await video_ready(
+                                ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+                        case 'events.dl.audio.ready':
+                            await audio_ready(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
 
                         # Add more cases here as needed

@@ -27,7 +27,7 @@ def update_and_reimport_yt_dlp():
         return None
 
 
-def download_tiktok_video(url: str, output_path='./downloads', reloadlib: bool = False) -> str:
+def download_video(url: str, output_path='./downloads', reloadlib: bool = False) -> str:
     if reloadlib:
         importlib.reload(yt_dlp)
 
@@ -55,3 +55,35 @@ def download_tiktok_video(url: str, output_path='./downloads', reloadlib: bool =
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     return f'{output_path}/{filename}.mp4'
+
+
+def download_audio(url: str, output_path='./downloads', reloadlib: bool = False, audio_format='mp3') -> str:
+    if reloadlib:
+        importlib.reload(yt_dlp)
+
+    os.makedirs(output_path, exist_ok=True)  # Ensure directory exists
+
+    md5_hash = hashlib.md5()
+    md5_hash.update(url.encode('utf-8'))
+    filename = md5_hash.hexdigest()
+
+    audio_file = f'{output_path}/{filename}.{audio_format}'
+    if os.path.exists(audio_file):
+        return audio_file
+
+    ydl_opts = {
+        'outtmpl': f'{output_path}/{filename}.%(ext)s',
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': audio_format,
+            'preferredquality': '192',  # bitrate for mp3
+        }],
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+    return audio_file

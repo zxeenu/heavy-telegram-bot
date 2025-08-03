@@ -8,7 +8,7 @@ from hydrogram import Client
 from src.core.service_container import ServiceContainer
 
 
-async def video_ready(ctx: ServiceContainer, telegram_app: Client, payload: object):
+async def audio_ready(ctx: ServiceContainer, telegram_app: Client, payload: object):
     ctx.logger.info(
         f"Event received successfully",
         extra={
@@ -44,7 +44,7 @@ async def video_ready(ctx: ServiceContainer, telegram_app: Client, payload: obje
             async with session.get(pre_signed_url) as resp:
                 if resp.status != 200:
                     ctx.logger.error(
-                        "Failed to download video.")
+                        "Failed to download audio.")
                     return
                 else:
                     # Make sure the folder exists
@@ -68,4 +68,4 @@ async def video_ready(ctx: ServiceContainer, telegram_app: Client, payload: obje
 
     async def progress(current, total):
         ctx.logger.info(f"{current * 100 / total:.1f}%")
-    await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded.')
+    await telegram_app.send_audio(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded.')
