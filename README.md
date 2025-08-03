@@ -58,6 +58,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 ### Key features
 
 - Associating logs with correlation IDs handling using `contextvars`
+- Compute time taken for event to be be received into Gateway and dispatched out of Gateway
 
 ### Task Roadmap
 
@@ -172,17 +173,18 @@ The Logger service is a Go application that listens to log events from RabbitMQ 
 
 ```mermaid
 flowchart TD
-    T1[Telegram Gateway]
-    M1[MediaPirate]
+    Gateway[Telegram Gateway]
+    MediaPirate[MediaPirate]
+    Commands{Commands}
+    Results{Results}
 
-    T1 -->|raw event| E1((events.telegram.raw))
-    E1 --> M1
+    Gateway -->|events.telegram.raw<br/>🔐 authenticated| MediaPirate
+    MediaPirate --> Commands
+    Commands -->|commands.media.video_download<br/>commands.media.audio_download| MediaPirate
+    MediaPirate --> Results
+    Results -->|events.dl.video.ready<br/>events.dl.audio.ready| Gateway
 
-    M1 -->|normalize events| E2((commands.tiktok.download))
-    E2 --> M1
-
-    M1 -->|normalized event| E3((commands.telegram.reply))
-    E3 -->|return blob to user| T1
+    classDef authEdge stroke:#green,stroke-width:3px
 ```
 
 ## 🚧 Planned Flow
