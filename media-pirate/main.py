@@ -8,10 +8,6 @@ from src.handlers.dl_command import video_dl_command, audio_dl_command
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 
 
-# global singleton
-ctx = ServiceContainer(log_name="MediaPirate", log_level=logging.INFO)
-
-
 def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     """
     Normalizes a Telegram message payload into a structured format.
@@ -30,46 +26,38 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
         from_user_id = int(from_user.get('id')) if from_user.get(
             'id') is not None else None
     except (TypeError, ValueError) as e:
-        ctx.logger.error(f"Failed to parse from_user_id: {e}")
         from_user_id = None
 
     try:
         chat_id = int(chat.get('id')) if chat.get('id') is not None else None
     except (TypeError, ValueError) as e:
-        ctx.logger.error(f"Failed to parse chat_id: {e}")
         chat_id = None
 
     text = str(payload.get('text') or '')
     parts = text.split()
     filtered_parts = list(filter(None, parts))
 
-    normalized_payload = {
-        "message_id": payload.get('id', ''),
-        "chat_id": chat_id,
-        "text": text,
-        "filtered_parts": filtered_parts,
-        "from_user_id": from_user_id,
-        "from_user_name": str(from_user.get('username', '')),
-        "reply_to_message_id": payload.get('reply_to_message_id'),
-        "reply_text": str(reply_to_message.get('text', '')),
-    }
-
-    ctx.logger.debug(f"Telegram payload normalized", extra={
-                     "normalized": normalized_payload})
-    return normalized_payload
+    return NormalizedTelegramPayload(
+        message_id=payload.get('id', ''),
+        chat_id=chat_id,
+        text=text,
+        filtered_parts=filtered_parts,
+        from_user_id=from_user_id,
+        from_user_name=str(from_user.get('username', '')),
+        reply_to_message_id=payload.get('reply_to_message_id'),
+        reply_text=str(reply_to_message.get('text', '')),
+    )
 
 
 # all telegram commands that are added here should accept the same arguments
 TELEGRAM_COMMAND_HANDLERS = {
     '.vdl': video_dl_command,
     '.adl': audio_dl_command,
-
 }
 
 
 async def main() -> None:
-    await ctx.connect()
-
+    ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
     ctx.logger.info("MediaPirate Service started!")
 
     async with ctx.connection as connection:

@@ -4,6 +4,8 @@ import logging
 from typing import Optional
 from aio_pika.abc import AbstractRobustConnection, AbstractRobustChannel
 from src.core.logging_context import get_correlation_id
+import redis.asyncio as redis
+from redis.asyncio.client import Redis
 
 
 class ContextualColorFormatter(logging.Formatter):
@@ -61,47 +63,13 @@ class ServiceContainer:
     logger: logging.Logger
     connection: Optional[AbstractRobustConnection]
     channel: Optional[AbstractRobustChannel]
+    redis: Optional[Redis]
 
-    def __init__(self, log_level: int = logging.INFO, log_name="") -> None:
-        self.logger = logging.getLogger(log_name)
-        self.logger.setLevel(log_level)
-
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = ContextualColorFormatter(
-                "[%(name)s] [%(asctime)s] [%(levelname)s] [corr_id=%(correlation_id)s] %(message)s"
-            )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+    def __init__(self, logger: logging.Logger) -> None:
+        self.logger = logger
         self.connection = None
         self.channel = None
-
-    async def connect(self) -> None:
-
-        # Parse environment variables with sane defaults
-        rabbitmq_user = os.environ.get("RABBITMQ_USER")
-        rabbitmq_pass = os.environ.get("RABBITMQ_PASS")
-        rabbitmq_host = os.environ.get("RABBITMQ_HOST")
-        rabbitmq_port = os.environ.get(
-            "RABBITMQ_PORT")  # ensures it's an integer
-        rabbitmq_vhost = os.environ.get(
-            "RABBITMQ_VHOST", "/")  # optional, default is "/"
-
-        if not all([rabbitmq_user, rabbitmq_pass, rabbitmq_host, rabbitmq_port]):
-            self.logger.error(
-                "Missing one or more required RabbitMQ environment variables")
-            raise ValueError("Incomplete RabbitMQ configuration")
-
-        # Construct the connection URL
-        rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_pass}@{rabbitmq_host}:{rabbitmq_port}{rabbitmq_vhost}"
-        self.logger.info(rabbitmq_url)
-
-        self.connection = await aio_pika.connect_robust(rabbitmq_url)
-        self.channel = await self.connection.channel()
-        self.logger.info("Connected to RabbitMQ (async)")
-
-        # Optionally declare queues here if you want
-        # await self.channel.declare_queue('telegram_events', durable=False)
+        self.redis = None
 
     async def safe_publish(self, routing_key: str, body: str, exchange_name: str = '') -> None:
         if (self.connection is None or self.connection.is_closed or
@@ -128,3 +96,66 @@ class ServiceContainer:
         if self.connection and not self.connection.is_closed:
             await self.connection.close()
         self.logger.info("Closed RabbitMQ connection")
+
+    @classmethod
+    async def create(cls, log_level: int = logging.INFO, log_name="") -> "ServiceContainer":
+        logger = logging.getLogger(log_name)
+        logger.setLevel(log_level)
+
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = ContextualColorFormatter(
+                "[%(name)s] [%(asctime)s] [%(levelname)s] [corr_id=%(correlation_id)s] %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+
+        self = cls(logger)
+
+        # --- RabbitMQ Setup ---
+        rabbitmq_user = os.environ.get("RABBITMQ_USER")
+        rabbitmq_pass = os.environ.get("RABBITMQ_PASS")
+        rabbitmq_host = os.environ.get("RABBITMQ_HOST")
+        rabbitmq_port = os.environ.get("RABBITMQ_PORT")
+        rabbitmq_vhost = os.environ.get("RABBITMQ_VHOST", "/")
+
+        if not all([rabbitmq_user, rabbitmq_pass, rabbitmq_host, rabbitmq_port]):
+            logger.error(
+                "Missing one or more required RabbitMQ environment variables")
+            raise ValueError("Incomplete RabbitMQ configuration")
+
+        rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_pass}@{rabbitmq_host}:{rabbitmq_port}{rabbitmq_vhost}"
+        logger.info(f"Connecting to RabbitMQ: {rabbitmq_url}")
+
+        self.connection = await aio_pika.connect_robust(rabbitmq_url)
+        self.channel = await self.connection.channel()
+        logger.info("Connected to RabbitMQ")
+
+        # --- Redis Setup ---
+        redis_host = os.environ.get("REDIS_HOST")
+        redis_port = int(os.environ.get("REDIS_PORT"))
+        redis_password = os.environ.get("REDIS_PASSWORD")
+
+        if not all([redis_host, redis_port, redis_password]):
+            logger.error(
+                "Missing one or more required Redis environment variables")
+            raise ValueError("Incomplete Redis configuration")
+
+        redis_db = 0
+        self.redis = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            password=redis_password,
+        )
+
+        try:
+            pong = await self.redis.ping()
+            if pong:
+                logger.info(
+                    f"Connected to Redis at {redis_host}:{redis_port} [db={redis_db}]")
+        except Exception as e:
+            logger.error(f"Redis connection failed: {e}")
+            self.redis = None
+
+        return self

@@ -17,3 +17,15 @@
 - File Handling
 
   - `python3 -m pip install aiofiles`
+
+- Redis
+
+  - `python3 -m pip install "redis[hiredis]"`
+
+- Time Humanizing
+
+  - `python3 -m pip install --upgrade humanize`
+
+- Youtube
+
+  - `python3 -m pip install yt-dlp`

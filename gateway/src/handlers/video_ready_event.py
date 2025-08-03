@@ -4,11 +4,16 @@ from typing import Optional
 import urllib
 import aiofiles
 import aiohttp
+import humanize
 from hydrogram import Client
+from src.core.logging_context import get_correlation_id
 from src.core.service_container import ServiceContainer
+from time import time
 
 
-async def video_ready(ctx: ServiceContainer, telegram_app: Client, payload: object):
+async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client, payload: object):
+    correlation_id = get_correlation_id()
+
     ctx.logger.info(
         f"Event received successfully",
         extra={
@@ -66,6 +71,24 @@ async def video_ready(ctx: ServiceContainer, telegram_app: Client, payload: obje
 
     # TODO: keep track of documents uploaded to telegram, so we can reuse them
 
+    message_for_response = "Downloaded"
+    start_time_raw = await ctx.redis.hget(
+        f"correlation_id:{correlation_id}", "start_time")
+
+    if start_time_raw:
+        start_unix = int(start_time_raw)  # works even if still bytes
+        now_unix = int(time())
+        elapsed_seconds = now_unix - start_unix
+
+        human_readable = humanize.precisedelta(elapsed_seconds, format="%0.3f")
+        message_for_response = f"Downloaded in {human_readable}"
+
+        ctx.logger.info("Audio processed", extra={
+            "start_time": start_unix,
+            "now_time": now_unix,
+            "elapsed": human_readable,
+        })
+
     async def progress(current, total):
         ctx.logger.info(f"{current * 100 / total:.1f}%")
-    await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption='Downloaded.')
+    await telegram_app.send_video(chat_id, file_path, progress=progress, reply_to_message_id=message_id, caption=message_for_response)
