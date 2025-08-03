@@ -2,10 +2,12 @@ import asyncio
 import logging
 import json
 from typing import Optional
+from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
 from src.core.service_container import ServiceContainer
 from src.handlers.dl_command import video_dl_command, audio_dl_command
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
+from datetime import datetime, timezone
 
 
 def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
@@ -49,10 +51,9 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     )
 
 
-# all telegram commands that are added here should accept the same arguments
-TELEGRAM_COMMAND_HANDLERS = {
-    '.vdl': video_dl_command,
-    '.adl': audio_dl_command,
+TELEGRAM_COMMAND_TO_EVENT = {
+    '.vdl': 'commands.media.video_download',
+    '.adl': 'commands.media.audio_download',
 }
 
 
@@ -122,23 +123,47 @@ async def main() -> None:
                                     "Message does not contain any actionable keywords. Skipping.")
                                 continue
 
-                            handler = TELEGRAM_COMMAND_HANDLERS.get(
+                            event_to_dispatch = TELEGRAM_COMMAND_TO_EVENT.get(
                                 command_word)
-                            if handler is None:
-                                ctx.logger.warning(
-                                    "No handler found. Skipping.")
+                            if not event_to_dispatch:
+                                ctx.logger.info("Unknown command.")
                                 continue
 
-                            ctx.logger.info(
-                                f"Invoking handler for command word.")
-
-                            try:
-                                await handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
-                            except Exception:
-                                ctx.logger.exception(
-                                    f"Handler invocation failed")
+                            event = EventEnvelope(type=event_to_dispatch,
+                                                  correlation_id=correlation_id,
+                                                  timestamp=datetime.now(
+                                                      timezone.utc).isoformat(),
+                                                  payload=payload,
+                                                  version=1)
+                            event_as_json = event.to_json()
+                            await ctx.safe_publish(
+                                routing_key='telegram_events', body=event_as_json, exchange_name=''
+                            )
+                            ctx.logger.info("Telegram command mapped to a command handler", extra={
+                                'event_type': event_to_dispatch
+                            })
 
                         # Add more cases here as needed
+                        case 'commands.media.video_download':
+                            payload = body.get(
+                                'payload', {})
+                            data = normalize_telegram_payload(payload)
+                            try:
+                                await video_dl_command(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                            except Exception:
+                                ctx.logger.exception(
+                                    "Handler invocation failed")
+
+                        case 'commands.media.audio_download':
+                            payload = body.get(
+                                'payload', {})
+                            data = normalize_telegram_payload(payload)
+                            try:
+                                await audio_dl_command(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                            except Exception:
+                                ctx.logger.exception(
+                                    "Handler invocation failed")
+
                         case _:
                             ctx.logger.warning(
                                 "Unknown event_type received.",
