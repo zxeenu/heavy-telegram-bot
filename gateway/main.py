@@ -67,7 +67,7 @@ def make_event_bus_handler(ctx: ServiceContainer):
                 return
 
             await ctx.redis.hset(
-                f"correlation_id:{correlation_id}", 'start_time', int(time()))
+                f"correlation_id:{correlation_id}", 'start_time', time())
 
             event = EventEnvelope(type="events.telegram.raw",
                                   correlation_id=correlation_id,
@@ -224,6 +224,10 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
 
                     set_correlation_id(correlation_id)
 
+                    async def cleanup_redis():
+                        await ctx.redis.hdel(
+                            f"correlation_id:{correlation_id}", 'start_time')
+
                     if version is None:
                         ctx.logger.info(
                             "Event does not have a version. Malformed event payload.")
@@ -233,9 +237,11 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                         case 'events.dl.video.ready':
                             await video_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+                            # await cleanup_redis()
                         case 'events.dl.audio.ready':
                             await audio_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+                            await cleanup_redis()
 
                         # Add more cases here as needed
                         case _:
