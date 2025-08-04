@@ -1,18 +1,12 @@
 # Heavy Telegram Bot
 
+TLDR: An intentionally overengineered Telegram userbot ecosystem built for architectural play, event choreography, and modular experimentation.
+
 ## Project Overview
 
-This repository contains the core infrastructure and microservices for an event-driven Telegram user-bot ecosystem. The project is intentionally overengineered — an experiment in distributed systems and event choreography using modern tooling.
+This repository contains the core infrastructure and microservices for an event-driven (not distributed yet!) Telegram user-bot ecosystem. The project is intentionally overengineered — an experiment in modular design and event choreography using modern tooling.
 
 ⚠️ This project logs in as a user account using MTProto. Be aware that using userbots may violate Telegram’s terms of service. Use responsibly and at your own risk.
-
-## Getting Started
-
-1. Start the infrastructure
-2. Start the Gateway
-3. Start MediaPirate
-
-You should now be able to interact with the bot via Telegram.
 
 ## Architecture Decisions
 
@@ -46,12 +40,12 @@ Event-based programming has a remarkably similar feel to React programming. Both
 #### Event Handling
 
 - React: So many ways to do it. `onClick` to handle user click events. `useEffect` to react to changes in reactive state. Most of these functions don't return anything, they just do things.
-- Event systems: subscribers listen to events, and do something. It doesnt make sense to return anything when its event based, you just pass it to to the next step in the flow, or end the process.
+- Event systems: subscribers listen to events, and do something. It doesn't make sense to return anything when it's event based, you just pass it to the next step in the flow, or end the process.
 
 #### Global State Management
 
-- React: You want to share life up reactive state to share in different parts of your application tree, you reach out for `context` and implement it with a setter and a getter.
-- Event Systems: Redis for state management. You can do the set and get keys just the same. But its more powerful, you can set automatic cleanups with TTL (You do have similar ability to clean up in React via returning a cleanup function in a `useEffect`).
+- React: You want to share lift up reactive state to share across different parts of your application tree, you reach out for `context` or a global state management library, and implement it with a setter and a getter.
+- Event Systems: Redis for state management - effectively state that has been lifted to share across different parts. But its more powerful, you can set automatic cleanups with TTL (You do have similar ability to clean up in React via returning a cleanup function in a `useEffect`).
 
 #### Event Propagation
 
@@ -67,6 +61,14 @@ This mental models transfer suggests that frontend developers already possess mu
 
 Both types of programming have similar reactive event-driven flows.
 
+## Getting Started
+
+1. Start the infrastructure
+2. Start the Gateway
+3. Start MediaPirate
+
+You should now be able to interact with the bot via Telegram.
+
 ## Infrastructure Services
 
 Infrastructure is managed via Docker Compose in:
@@ -75,10 +77,10 @@ Infrastructure is managed via Docker Compose in:
 
 This includes:
 
-- 📨 **RabbitMQ** — message broker
-- 🧠 **Redis** — cache and ephemeral data store
-- 💾 **MinIO** — S3-compatible object storage
-- 🧭 **RedisInsight** — Redis UI for debugging and introspection
+- 📨 **RabbitMQ** - message broker
+- 🧠 **Redis** - cache and ephemeral data store
+- 💾 **MinIO** - S3-compatible object storage
+- 🧭 **RedisInsight** - Redis UI for debugging and introspection
 
 ### Starting Infrastructure
 
@@ -103,7 +105,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 ### Key features
 
 - Associating logs with correlation IDs handling using `contextvars`
-- Compute time taken for event to be be received into Gateway and dispatched out of Gateway
+- Compute time taken for event to be received into Gateway and dispatched out of Gateway
 
 #### Rate limiting (🚧 PLANNED)
 
@@ -116,7 +118,6 @@ This strategy limits how many actions a user can perform within a fixed time win
 - [x] Listen for video downloads events, and upload from minio into telegram
 - [ ] Optimize video uploading, by reusing documents already in telegram
 - [ ] JSON Schema implementation
-- [ ] Implement rate limiting to prevent users from spamming the service
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
@@ -147,7 +148,7 @@ docker-compose -f gateway/docker-compose.yml up -d
 
 ### What it is
 
-Media Pirate is a distributed content relay and command system designed to experiment with messaging patterns, service orchestration, and multi-user sync.
+MediaPirate is a distributed content relay and command system designed to experiment with messaging patterns, service orchestration, and multi-user sync.
 
 - Located in the [`media-pirate/`](./media-pirate) directory.
 - See [`media-pirate/README.md`](./media-pirate/README.md) for detailed setup and usage instructions.
