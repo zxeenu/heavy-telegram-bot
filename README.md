@@ -106,14 +106,17 @@ The Gateway service is a Python application that listens to Telegram events usin
 
 - Associating logs with correlation IDs handling using `contextvars`
 - Computes time taken for event to be received into Gateway and dispatched out of Gateway
-- Speeds up user response by reusing videos and audios already uploaded to Telegram if available via a Redis hashmap
+- Speeds up user response by reusing videos and audios already uploaded to Telegram if available via a Redis hashmap. If the uploaded link is expired, we default to fetching the data from object storage via a presigned url.
 - Cleans up files saved to disk via an Redis counter. Files are deleted oldest first.
+- Handles rate limiting of meaningful events.
 
-#### Rate limiting (🚧 PLANNED)
+#### Rate limiting
 
 Strategy: Fixed Window Rate Limiting with TTL
 
 This strategy limits how many actions a user can perform within a fixed time window. It uses a Redis key per user (e.g. rate:user:<id>) to count requests. The counter resets after a set TTL (e.g. 60 seconds), allowing automatic cleanup. If the request count exceeds the allowed limit during the window, further requests are denied until the TTL expires.
+
+Since we are publishing raw telegram events from Gateway into the message broker we can't blindly increment the usage count with this event. Instead, we are allowing services to decide when to increment the usage count. **This should be done after meaningful events.**
 
 ### Task Roadmap
 
@@ -123,7 +126,7 @@ This strategy limits how many actions a user can perform within a fixed time win
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
-- [ ] Implement rate limiting
+- [x] Implement rate limiting
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
 
