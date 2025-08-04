@@ -67,7 +67,7 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             "human_readable_elapsed_time": human_readable,
         })
 
-    cached_file_id_raw = await ctx.redis.hget(f"video_content", object_name)
+    cached_file_id_raw = await ctx.redis.hget(f"audio_content", object_name)
     cached_file_id = (
         cached_file_id_raw.decode()
         if isinstance(cached_file_id_raw, bytes)
@@ -96,7 +96,7 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             f"ID: `{correlation_id}`"
         )
 
-        msg = await telegram_app.send_audio(chat_id, audio=cached_file_id, progress=progress, reply_to_message_id=message_id, caption=final_caption)
+        await telegram_app.send_audio(chat_id, audio=cached_file_id, progress=progress, reply_to_message_id=message_id, caption=final_caption)
         return
 
     file_path = os.path.join("downloads", object_name)
@@ -156,7 +156,7 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         return
 
     await ctx.redis.hset(
-        f"video_content", object_name, file_id)
+        f"audio_content", object_name, file_id)
     ctx.logger.info("File uploaded to telegram, and cached locally", extra={
         'file_id': file_id
     })

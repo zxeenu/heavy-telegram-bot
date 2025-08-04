@@ -237,7 +237,7 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                         case 'events.dl.video.ready':
                             await video_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-                            # await cleanup_redis()
+                            await cleanup_redis()
                         case 'events.dl.audio.ready':
                             await audio_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
