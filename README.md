@@ -105,7 +105,8 @@ The Gateway service is a Python application that listens to Telegram events usin
 ### Key features
 
 - Associating logs with correlation IDs handling using `contextvars`
-- Compute time taken for event to be received into Gateway and dispatched out of Gateway
+- Computes time taken for event to be received into Gateway and dispatched out of Gateway
+- Speeds up user response by reusing videos and audios already uploaded to Telegram if available via a Redis hashmap
 
 #### Rate limiting (🚧 PLANNED)
 
@@ -116,7 +117,7 @@ This strategy limits how many actions a user can perform within a fixed time win
 ### Task Roadmap
 
 - [x] Listen for video downloads events, and upload from minio into telegram
-- [ ] Optimize video uploading, by reusing documents already in telegram
+- [x] Optimize video uploading, by reusing documents already in telegram
 - [ ] JSON Schema implementation
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [x] Implement basic authentication
