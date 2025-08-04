@@ -11,7 +11,9 @@ import uuid
 from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
+from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
+from src.handlers.download_cleanup_command import download_cleanup_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 
 
@@ -191,6 +193,22 @@ def make_event_bus_handler(ctx: ServiceContainer):
 
 # Background task example
 async def background_task(telegram_app: Client, ctx: ServiceContainer):
+
+    async def after_event_handling():
+        key = "cleanup_event_counter"
+        count = await ctx.redis.incr(key)
+        # Set TTL so it doesn't live forever (e.g., 1 day)
+        await ctx.redis.expire(key, 86400)
+        if count >= 100:
+            await ctx.redis.delete(key)
+            await downloads_cleanup_dispatcher(ctx=ctx, max_delete=100)
+        pass
+
+    async def cleanup_redis(correlation_id_str: str):
+        await ctx.redis.hdel(
+            f"correlation_id:{correlation_id_str}", 'start_time')
+        pass
+
     async with ctx.connection as connection:
         channel = await connection.channel()
 
@@ -224,10 +242,6 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
 
                     set_correlation_id(correlation_id)
 
-                    async def cleanup_redis():
-                        await ctx.redis.hdel(
-                            f"correlation_id:{correlation_id}", 'start_time')
-
                     if version is None:
                         ctx.logger.info(
                             "Event does not have a version. Malformed event payload.")
@@ -237,11 +251,11 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                         case 'events.dl.video.ready':
                             await video_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-                            await cleanup_redis()
                         case 'events.dl.audio.ready':
                             await audio_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-                            await cleanup_redis()
+                        case 'commands.gateway.downloads-cleanup':
+                            await download_cleanup_command_handler(ctx=ctx, payload=body.get('payload', {}))
 
                         # Add more cases here as needed
                         case _:
@@ -250,6 +264,9 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                                     event_type: event_type
                                 })
                             pass
+
+                    await cleanup_redis(correlation_id)
+                    await after_event_handling()
 
 
 # Main entry point — directly manages the context lifecycle
