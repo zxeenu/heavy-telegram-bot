@@ -172,11 +172,16 @@ def make_event_bus_handler(ctx: ServiceContainer):
         is_rate_limited = not is_not_rate_limited
 
         if is_rate_limited:
-            await client.send_message(
-                chat_id=message.chat.id,
-                text="⏳ Too many requests. Please try again shortly.",
-                reply_to_message_id=message.id
-            )
+            # TODO: We need to let the individual services reply back!
+            # because this will think event non commands need to be replied to
+            # or potentially, we can dispatch events right from gateway, instead
+            # of funneling the raw tg events. 
+            
+            # await client.send_message(
+            #     chat_id=message.chat.id,
+            #     text="⏳ Too many requests. Please try again shortly.",
+            #     reply_to_message_id=message.id
+            # )
             ctx.logger.warning("Too many requests. Rate limited!", extra={
                 'from_user_id': from_user_id
             })
