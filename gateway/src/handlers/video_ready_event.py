@@ -11,6 +11,9 @@ from src.core.service_container import ServiceContainer
 from time import time
 
 
+VIDEO_CACHE_TTL = 600  # 10 minutes
+
+
 class ElapsedTime(TypedDict):
     now_unix: float
     elapsed_seconds: float
@@ -67,7 +70,8 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             "human_readable_elapsed_time": human_readable,
         })
 
-    cached_file_id_raw = await ctx.redis.hget(f"video_content", object_name)
+    # cached_file_id_raw = await ctx.redis.hget(f"video_content", object_name)
+    cached_file_id_raw = await ctx.redis.get(f"video_content:{object_name}")
     cached_file_id = (
         cached_file_id_raw.decode()
         if isinstance(cached_file_id_raw, bytes)
@@ -96,8 +100,16 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             f"ID: `{correlation_id}`"
         )
 
-        await telegram_app.send_video(chat_id, video=cached_file_id, progress=progress, reply_to_message_id=message_id, caption=final_caption)
-        return
+        try:
+            await telegram_app.send_video(chat_id, video=cached_file_id, progress=progress, reply_to_message_id=message_id, caption=final_caption)
+            # let it expire or lets catch this
+            # await ctx.redis.delete(f"audio_content:{object_name}")
+            return
+        except Exception as e:
+            ctx.logger.warning(
+                "Cached file_id failed, retrying download...",
+                extra={'error': str(e)}
+            )
 
     file_path = os.path.join("downloads", object_name)
     # Check if file already exists
@@ -129,12 +141,14 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
 
     msg = await telegram_app.send_video(chat_id, video=file_path, progress=progress, reply_to_message_id=message_id, caption=initial_caption)
     new_upload_file_metrics = get_elapsed_time()
+    size = os.path.getsize(file_path)
 
     ctx.logger.info("Video processed", extra={
         "start_time": f"{start_unix:.6f}",
         "now_time": f"{new_upload_file_metrics['now_unix']:.6f}",
         "elapsed_seconds": round(new_upload_file_metrics['elapsed_seconds'], 6),
         "elapsed_human": new_upload_file_metrics['human_readable_elapsed_time'],
+        "file_size": humanize.naturalsize(size)
     })
 
     final_caption = (
@@ -155,8 +169,9 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         ctx.logger.error("No video in Telegram message!")
         return
 
-    await ctx.redis.hset(
-        f"video_content", object_name, file_id)
+    # await ctx.redis.hset(
+    #     f"video_content", object_name, file_id)
+    await ctx.redis.set(f"video_content:{object_name}", file_id, ex=VIDEO_CACHE_TTL)
     ctx.logger.info("File uploaded to telegram, and cached locally", extra={
         'file_id': file_id
     })

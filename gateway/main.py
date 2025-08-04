@@ -5,6 +5,7 @@ import os
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
+from src.authenticate import Authenticator
 from src.core.service_container import ServiceContainer
 from time import time
 import uuid
@@ -15,6 +16,7 @@ from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
 from src.handlers.download_cleanup_command import download_cleanup_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
+from src.core.rate_limiter import FixedWindowRateLimiter
 
 
 # Convert message to serializable JSON
@@ -35,159 +37,174 @@ def to_serializable(obj):
         return str(obj)
 
 
+# Clean hydrogram message into something more relevant for observability
+def clean_telegram_payload(message: Message):
+    # Extract basic info
+    user = getattr(message.from_user, 'username', None) or getattr(
+        message.from_user, 'id', 'UnknownUser')
+    user_id = getattr(message.from_user, 'id', 'UnknownUser')
+    chat_id = getattr(message.chat, 'id', 'UnknownChat')
+    chat_type = getattr(message.chat, 'type', 'UnknownType')
+    message_id = getattr(message, 'message_id', 'UnknownID')
+    message_time = getattr(message, 'date', None)
+    message_time_str = message_time.isoformat() if message_time else 'UnknownTime'
+
+    # Determine message type
+    if getattr(message, 'sticker', None):
+        message_type = 'sticker'
+    elif getattr(message, 'photo', None):
+        message_type = 'photo'
+    elif getattr(message, 'document', None):
+        message_type = 'document'
+    elif getattr(message, 'video', None):
+        message_type = 'video'
+    elif getattr(message, 'audio', None):
+        message_type = 'audio'
+    elif getattr(message, 'voice', None):
+        message_type = 'voice'
+    elif getattr(message, 'location', None):
+        message_type = 'location'
+    else:
+        message_type = 'text'
+
+    # Text or caption preview
+    text = getattr(message, 'text', None)
+    caption = getattr(message, 'caption', None)
+    text_or_caption = text or caption
+    text_preview = text_or_caption[:50] + ("..." if len(
+        text_or_caption) > 50 else "") if text_or_caption else "<no text>"
+
+    # Check if reply
+    reply_to = None
+    if getattr(message, 'reply_to_message', None):
+        replied = message.reply_to_message
+        reply_user = getattr(replied.from_user, 'username', None) or getattr(
+            replied.from_user, 'id', 'UnknownUser')
+        reply_text = getattr(replied, 'text', None) or getattr(
+            replied, 'caption', None)
+
+        if reply_text:
+            reply_preview = reply_text[:30] + \
+                ("..." if len(reply_text) > 30 else "")
+        else:
+            reply_preview = "<no text>"
+
+        reply_to = f"Reply to {reply_user}: \"{reply_preview}\""
+
+    # Photo info
+    photo_info = None
+    photos = getattr(message, 'photo', None)
+    if photos:
+        if isinstance(photos, list):
+            photo_count = len(photos)
+            largest_photo = photos[-1]
+        else:
+            photo_count = 1
+            largest_photo = photos
+        width = getattr(largest_photo, 'width', '?')
+        height = getattr(largest_photo, 'height', '?')
+        photo_info = f"Photo(s): {photo_count}, largest size: {width}x{height}"
+
+    # Document info
+    doc_info = None
+    document = getattr(message, 'document', None)
+    if document:
+        doc_name = getattr(document, 'file_name', 'unknown')
+        doc_mime = getattr(document, 'mime_type', 'unknown')
+        doc_info = f"Document: {doc_name} ({doc_mime})"
+
+    # Sticker info
+    sticker_info = None
+    sticker = getattr(message, 'sticker', None)
+    if sticker:
+        emoji = getattr(sticker, 'emoji', None)
+        set_name = getattr(sticker, 'set_name', None)
+        sticker_info = f"Sticker: {emoji or ''} from set {set_name or 'unknown'}"
+
+    # Location info
+    location_info = None
+    location = getattr(message, 'location', None)
+    if location:
+        lat = getattr(location, 'latitude', '?')
+        lon = getattr(location, 'longitude', '?')
+        location_info = f"Location: {lat}, {lon}"
+
+    # Collect structured log context
+    extras = {
+        "user": user,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "message_time_str": message_time_str,
+        "chat_type": chat_type,
+        "message_type": message_type,
+        "text_preview": text_preview,
+        "location_info": location_info,
+        "sticker_info": sticker_info,
+        "doc_info": doc_info,
+        "photo_info": photo_info,
+        "reply_to": reply_to
+    }
+
+    # Optionally filter out None values for a cleaner log
+    filtered_extras = {k: v for k, v in extras.items() if v is not None}
+    return filtered_extras
+
+
 def make_event_bus_handler(ctx: ServiceContainer):
     async def event_bus_handler(client: Client, message: Message):
 
-        # Extract basic info
-        user = getattr(message.from_user, 'username', None) or getattr(
-            message.from_user, 'id', 'UnknownUser')
-        user_id = getattr(message.from_user, 'id', 'UnknownUser')
-        chat_id = getattr(message.chat, 'id', 'UnknownChat')
-        chat_type = getattr(message.chat, 'type', 'UnknownType')
-        message_id = getattr(message, 'message_id', 'UnknownID')
-        message_time = getattr(message, 'date', None)
-        message_time_str = message_time.isoformat() if message_time else 'UnknownTime'
-
-        admin_user_id = int(os.environ["TELEGRAM_ADMIN_USER_ID"])
-
-        # allowed_user_ids = set([admin_user_id])
-        authorized: bool = False
-
-        if admin_user_id == user_id:
-            authorized = True
-
         correlation_id = str(uuid.uuid4())
-
         set_correlation_id(correlation_id)
 
-        if authorized:
-            try:
-                message_dict = to_serializable(obj=message)
-                # ctx.logger.info(f"Message serialized successfully: {message_dict}")
-            except Exception as e:
-                ctx.logger.error(f"Failed to serialize message: {e}")
-                return
+        # Extract basic info
+        from_user_id = getattr(message.from_user, 'id', 'UnknownUser')
+        authenticator = Authenticator()
+        is_authenticated = authenticator.is_allowed(from_user_id)
 
-            await ctx.redis.hset(
-                f"correlation_id:{correlation_id}", 'start_time', time())
-
-            event = EventEnvelope(type="events.telegram.raw",
-                                  correlation_id=correlation_id,
-                                  timestamp=datetime.now(
-                                      timezone.utc).isoformat(),
-                                  payload=message_dict,
-                                  version=1)
-            event_as_json = event.to_json()
-
-            await ctx.safe_publish(
-                routing_key='telegram_events', body=event_as_json, exchange_name=''
-            )
-
-        # Determine message type
-        if getattr(message, 'sticker', None):
-            message_type = 'sticker'
-        elif getattr(message, 'photo', None):
-            message_type = 'photo'
-        elif getattr(message, 'document', None):
-            message_type = 'document'
-        elif getattr(message, 'video', None):
-            message_type = 'video'
-        elif getattr(message, 'audio', None):
-            message_type = 'audio'
-        elif getattr(message, 'voice', None):
-            message_type = 'voice'
-        elif getattr(message, 'location', None):
-            message_type = 'location'
-        else:
-            message_type = 'text'
-
-        # Text or caption preview
-        text = getattr(message, 'text', None)
-        caption = getattr(message, 'caption', None)
-        text_or_caption = text or caption
-        text_preview = text_or_caption[:50] + ("..." if len(
-            text_or_caption) > 50 else "") if text_or_caption else "<no text>"
-
-        # Check if reply
-        reply_to = None
-        if getattr(message, 'reply_to_message', None):
-            replied = message.reply_to_message
-            reply_user = getattr(replied.from_user, 'username', None) or getattr(
-                replied.from_user, 'id', 'UnknownUser')
-            reply_text = getattr(replied, 'text', None) or getattr(
-                replied, 'caption', None)
-
-            if reply_text:
-                reply_preview = reply_text[:30] + \
-                    ("..." if len(reply_text) > 30 else "")
-            else:
-                reply_preview = "<no text>"
-
-            reply_to = f"Reply to {reply_user}: \"{reply_preview}\""
-
-        # Photo info
-        photo_info = None
-        photos = getattr(message, 'photo', None)
-        if photos:
-            if isinstance(photos, list):
-                photo_count = len(photos)
-                largest_photo = photos[-1]
-            else:
-                photo_count = 1
-                largest_photo = photos
-            width = getattr(largest_photo, 'width', '?')
-            height = getattr(largest_photo, 'height', '?')
-            photo_info = f"Photo(s): {photo_count}, largest size: {width}x{height}"
-
-        # Document info
-        doc_info = None
-        document = getattr(message, 'document', None)
-        if document:
-            doc_name = getattr(document, 'file_name', 'unknown')
-            doc_mime = getattr(document, 'mime_type', 'unknown')
-            doc_info = f"Document: {doc_name} ({doc_mime})"
-
-        # Sticker info
-        sticker_info = None
-        sticker = getattr(message, 'sticker', None)
-        if sticker:
-            emoji = getattr(sticker, 'emoji', None)
-            set_name = getattr(sticker, 'set_name', None)
-            sticker_info = f"Sticker: {emoji or ''} from set {set_name or 'unknown'}"
-
-        # Location info
-        location_info = None
-        location = getattr(message, 'location', None)
-        if location:
-            lat = getattr(location, 'latitude', '?')
-            lon = getattr(location, 'longitude', '?')
-            location_info = f"Location: {lat}, {lon}"
-
-        # Collect structured log context
-        extras = {
-            "user": user,
-            "user_id": user_id,
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "message_time_str": message_time_str,
-            "chat_type": chat_type,
-            "message_type": message_type,
-            "text_preview": text_preview,
-            "location_info": location_info,
-            "sticker_info": sticker_info,
-            "doc_info": doc_info,
-            "photo_info": photo_info,
-            "reply_to": reply_to
-        }
-
-        # Optionally filter out None values for a cleaner log
-        filtered_extras = {k: v for k, v in extras.items() if v is not None}
-
-        if authorized:
-            ctx.logger.info("Message sent to event bus!",
-                            extra=filtered_extras)
-        else:
+        filtered_extras = clean_telegram_payload(message=message)
+        if not is_authenticated:
             ctx.logger.warning("Message skipped", extra=filtered_extras)
+            return
+
+        rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
+        is_not_rate_limited = await rate_limiter.is_allowed(from_user_id)
+        is_rate_limited = not is_not_rate_limited
+
+        if is_rate_limited:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text="⏳ Too many requests. Please try again shortly.",
+                reply_to_message_id=message.id
+            )
+            ctx.logger.warning("Too many requests. Rate limited!", extra={
+                'from_user_id': from_user_id
+            })
+            return
+
+        try:
+            message_dict = to_serializable(obj=message)
+        except Exception as e:
+            ctx.logger.error(f"Failed to serialize message: {e}")
+            return
+
+        await ctx.redis.hset(
+            f"correlation_id:{correlation_id}", 'start_time', time())
+
+        event = EventEnvelope(type="events.telegram.raw",
+                              correlation_id=correlation_id,
+                              timestamp=datetime.now(
+                                  timezone.utc).isoformat(),
+                              payload=message_dict,
+                              version=1)
+        event_as_json = event.to_json()
+
+        await ctx.safe_publish(
+            routing_key='telegram_events', body=event_as_json, exchange_name=''
+        )
+        ctx.logger.info("Message sent to event bus!",
+                        extra=filtered_extras)
+
     return event_bus_handler
 
 

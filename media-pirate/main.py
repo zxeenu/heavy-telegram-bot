@@ -4,6 +4,7 @@ import json
 from typing import Optional
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
+from src.core.rate_limiter import FixedWindowRateLimiter
 from src.core.service_container import ServiceContainer
 from src.handlers.dl_command import video_dl_command_handler, audio_dl_command_handler
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
@@ -60,6 +61,16 @@ TELEGRAM_COMMAND_TO_EVENT = {
 async def main() -> None:
     ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
     ctx.logger.info("MediaPirate Service started!")
+
+    rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
+
+    async def after_event_handling(user_id: str):
+        meaningul_use_count = await rate_limiter.increment(user_id=user_id)
+        ctx.logger.info("Rate limit incremented", extra={
+            'from_user_id': user_id,
+            'meaningul_use_count': meaningul_use_count
+        })
+        pass
 
     async with ctx.connection as connection:
         channel = await connection.channel()
@@ -141,6 +152,7 @@ async def main() -> None:
                             ctx.logger.info("Telegram command mapped to a command handler", extra={
                                 'event_type': event_to_dispatch
                             })
+                            await after_event_handling(user_id=data['from_user_id'])
 
                         # Add more cases here as needed
                         case 'commands.media.video_download':
