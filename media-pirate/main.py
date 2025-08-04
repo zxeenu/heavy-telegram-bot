@@ -116,14 +116,16 @@ async def main() -> None:
                                             "command_word": command_word})
 
                             if not command_word:
-                                ctx.logger.info(
+                                ctx.logger.warning(
                                     "Message does not contain any actionable keywords. Skipping.")
                                 continue
 
                             event_to_dispatch = TELEGRAM_COMMAND_TO_EVENT.get(
                                 command_word)
                             if not event_to_dispatch:
-                                ctx.logger.info("Unknown command.")
+                                ctx.logger.error("Failed to process command. No configured mappings!", extra={
+                                    "event_type": event_type,
+                                })
                                 continue
 
                             event = EventEnvelope(type=event_to_dispatch,
