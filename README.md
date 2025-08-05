@@ -127,6 +127,30 @@ The Gateway service is a Python application that listens to Telegram events usin
 - Cleans up files saved to disk via an Redis counter. Files are deleted oldest first.
 - Adds metadata to the event envelope letting subscribers know if the event comes from a user that has been rate limited
 
+#### Interest Accumulation
+
+To upload a file do Telegram you can use a actual file on disk, or the `file_id` on Telegram's servers. The issue here is that the `file_id` on telegram expires.
+
+When we send videos and audios back to the user, we are first trying to see if we have access to a cached `file_id`, and if it is not available, then we get the file from our object storage via a supplied presigned get request.
+
+When sending the uploading the object to telegram, we also check if it exists in the temp downloads directory, and it doesn't, we download it. So there's 2 checks until this point. Check redis cache for a telegram `file_id`, and if not available get a fresh copy from object storage.
+
+If an upload to telegram is successful, we cache it to use later. These cached `file_id`s expire.
+
+The issue here is that, what if multiple people are requesting for an object that is not on disk (a fresh video source).
+
+Now, functionally, this issue can be resolved by using the `correlation_id` as a filename for the initial download, and then then renaming it to the actual object's name after it has been uploaded to telegram. But it would still do redundant computations: downloading, renaming and deleting files - when 2 files that have different `correlation_id` map to the same actual object name. This will occur, because we need to content based addressing needs maps to the same file when given the same content (content being the presigned url in this case).
+
+So what we have instead opted for the following process:
+
+- Every presigned url will map to an `interest_accumulator_key` to use a a lock
+- We will check if the `interest_accumulator_key` lock exists, before doing any processing, and then republish an event after a small delay if it does.
+- If the `interest_accumulator_key` does not exist, then we will process it normally.
+
+This process gives us the ability to delay events that are being locked, but when they come back... they will get the `file_id` that was cached. The accumulator pattern relies of the redis cache!
+
+_The delayed requests essentially become cache hits rather than duplicate work - transforming a coordination problem into a caching optimization._
+
 ### Task Roadmap
 
 - [x] Listen for video downloads events, and upload from minio into telegram
@@ -137,6 +161,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
+- [x] Handle race condition via interest accumulation. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties.
 
 ### Supported Command Words (🚧 PLANNED)
 
@@ -194,7 +219,6 @@ The full source URL and normalized form are preserved as metadata to ensure trac
 - [ ] Enforce file size limits for small downloads
 - [ ] Implement durable, idempotent jobs for large downloads with retry support
 - [ ] JSON Schema implementation (cross-service payload validations)
-- [ ] Handle race condition via interest accumulation. Decouple download requests from download execution - accumulate interested parties and fan-out results for success and failed for all interested parties.
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
 - [ ] Reuse downloaded files when doing audio extraction (if a video exists inside the bucket)

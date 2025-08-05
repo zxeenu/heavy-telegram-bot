@@ -1,3 +1,5 @@
+import asyncio
+from datetime import datetime, timezone
 import hashlib
 import os
 from typing import Optional, TypedDict
@@ -6,12 +8,14 @@ import aiofiles
 import aiohttp
 import humanize
 from hydrogram import Client
+from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import get_correlation_id
 from src.core.service_container import ServiceContainer
 from time import time
 
 
 VIDEO_CACHE_TTL = 600  # 10 minutes
+VIDEO_CACHE_INTEREST_ACC_TTL = 500
 
 
 class ElapsedTime(TypedDict):
@@ -51,6 +55,49 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
     object_name = hashlib.sha256(
         base_url.encode()).hexdigest()
 
+    # cached_file_id_raw = await ctx.redis.hget(f"video_content", object_name)
+    cached_file_id_raw = await ctx.redis.get(f"video_content:{object_name}")
+    cached_file_id = (
+        cached_file_id_raw.decode()
+        if isinstance(cached_file_id_raw, bytes)
+        else cached_file_id_raw
+    )
+
+    ctx.logger.info("data from redis", extra={
+        'cached_file_id_raw': cached_file_id_raw,
+        'cached_file_id': cached_file_id
+    })
+
+    def get_interest_accumulator_key():
+        return f"ongoing_video_content:{object_name}"
+
+    # Setting up interest accumulation
+    # TODO: potentially we need a delayed queue to handle this
+    interest_accumulation_status_was_set = await ctx.redis.set(get_interest_accumulator_key(), "ongoing", ex=VIDEO_CACHE_INTEREST_ACC_TTL, nx=True)
+    if not interest_accumulation_status_was_set and not cached_file_id:
+        await asyncio.sleep(2)
+        event = EventEnvelope(type='events.dl.video.ready',
+                              correlation_id=correlation_id,
+                              timestamp=datetime.now(
+                                  timezone.utc).isoformat(),
+                              payload=payload,
+                              version=1)
+        event_as_json = event.to_json()
+        await ctx.safe_publish(
+            routing_key='telegram_events', body=event_as_json, exchange_name=''
+        )
+        return
+
+    ctx.logger.info(
+        "Acquired interest lock", extra={
+            'object_name': object_name,
+            'interest_accumulation_status': interest_accumulation_status_was_set,
+            'interest_key': get_interest_accumulator_key(),
+            'interest_value': "ongoing",  # The value you set
+            'ttl': VIDEO_CACHE_INTEREST_ACC_TTL,
+            'object_name': object_name
+        })
+
     start_time_raw = await ctx.redis.hget(
         f"correlation_id:{correlation_id}", "start_time"
     )
@@ -69,19 +116,6 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             "elapsed_seconds": elapsed_seconds,
             "human_readable_elapsed_time": human_readable,
         })
-
-    # cached_file_id_raw = await ctx.redis.hget(f"video_content", object_name)
-    cached_file_id_raw = await ctx.redis.get(f"video_content:{object_name}")
-    cached_file_id = (
-        cached_file_id_raw.decode()
-        if isinstance(cached_file_id_raw, bytes)
-        else cached_file_id_raw
-    )
-
-    ctx.logger.info("data from redis", extra={
-        'cached_file_id_raw': cached_file_id_raw,
-        'cached_file_id': cached_file_id
-    })
 
     if cached_file_id:
         cashed_file_metrics = get_elapsed_time()
@@ -103,7 +137,8 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         try:
             await telegram_app.send_video(chat_id, video=cached_file_id, progress=progress, reply_to_message_id=message_id, caption=final_caption)
             # let it expire or lets catch this
-            # await ctx.redis.delete(f"audio_content:{object_name}")
+            # await ctx.redis.delete(f"video_content:{object_name}")
+            await ctx.redis.delete(get_interest_accumulator_key())
             return
         except Exception as e:
             ctx.logger.warning(
@@ -172,6 +207,7 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
     # await ctx.redis.hset(
     #     f"video_content", object_name, file_id)
     await ctx.redis.set(f"video_content:{object_name}", file_id, ex=VIDEO_CACHE_TTL)
+    await ctx.redis.delete(get_interest_accumulator_key())
     ctx.logger.info("File uploaded to telegram, and cached locally", extra={
         'file_id': file_id
     })
