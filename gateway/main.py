@@ -47,7 +47,7 @@ def clean_telegram_payload(message: Message):
     user_id = getattr(message.from_user, 'id', 'UnknownUser')
     chat_id = getattr(message.chat, 'id', 'UnknownChat')
     chat_type = getattr(message.chat, 'type', 'UnknownType')
-    message_id = getattr(message, 'message_id', 'UnknownID')
+    message_id = getattr(message, 'id', 'UnknownID')
     message_time = getattr(message, 'date', None)
     message_time_str = message_time.isoformat() if message_time else 'UnknownTime'
 
