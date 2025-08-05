@@ -126,6 +126,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - Speeds up user response by reusing videos and audios already uploaded to Telegram if available via a Redis hashmap. If the uploaded link is expired, we default to fetching the data from object storage via a presigned url.
 - Cleans up files saved to disk via an Redis counter. Files are deleted oldest first.
 - Adds metadata to the event envelope letting subscribers know if the event comes from a user that has been rate limited
+- File handling interest accumulation
 
 #### Interest Accumulation
 
