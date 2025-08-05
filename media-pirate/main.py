@@ -161,7 +161,7 @@ async def main() -> None:
                                 await ctx.safe_publish(
                                     routing_key='gateway_events', body=rate_limit_as_json, exchange_name=''
                                 )
-                                ctx.logger.info("Request will not be handled. Recieved from rate limited user", extra={
+                                ctx.logger.info("Request will not be handled. Received from rate limited user", extra={
                                     'event_type': event_to_dispatch,
                                     'payload': rate_limit_payload,
                                 })

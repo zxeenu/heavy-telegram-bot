@@ -31,7 +31,7 @@ Since we are publishing raw telegram events from Gateway into the message broker
 
 The Gateway does not know what any of the services do, so we cant handle this logic inside it. Taking the event parsing logic from other services and putting it in Gateway will unfortunately become unmaintainable as there are more services - it would also lead to use maintaining multiples places with the same parsing logic.
 
-Normalizing telegram events to application events in the Gateway is a solution. This would make things more robust and structured, but would also make add more features more involved. But would also go against choreographing events.
+Normalizing telegram events to application events in the Gateway is a solution. This would make things more robust and structured, but would also make adding new features more involved. This also goes against choreographing events.
 
 In favor on keeping things easy to extend for now, we will be delegating rate limiting to the service level.
 

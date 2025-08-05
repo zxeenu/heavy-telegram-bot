@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import os
+import random
 from typing import Optional, TypedDict
 import urllib
 import aiofiles
@@ -75,7 +76,8 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
     # TODO: potentially we need a delayed queue to handle this
     interest_accumulation_status_was_set = await ctx.redis.set(get_interest_accumulator_key(), "ongoing", ex=VIDEO_CACHE_INTEREST_ACC_TTL, nx=True)
     if not interest_accumulation_status_was_set and not cached_file_id:
-        await asyncio.sleep(2)
+        # If multiple handlers retry at the same time after 2s, you may still get contention. Add a small random delay:
+        await asyncio.sleep(2 + random.uniform(0, 1))
         event = EventEnvelope(type='events.dl.video.ready',
                               correlation_id=correlation_id,
                               timestamp=datetime.now(
