@@ -2,9 +2,14 @@ FROM python:3.14.0b4-slim-bullseye
 
 WORKDIR /app
 
-
-# Install ffmpeg first (system dependency)
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    build-essential \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    libuv1-dev \
+ && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies first for better caching
 COPY requirements.txt .
