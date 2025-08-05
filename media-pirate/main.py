@@ -139,6 +139,34 @@ async def main() -> None:
                                 })
                                 continue
 
+                            # Check if rate limited
+                            is_not_rate_limited = await rate_limiter.is_allowed(data["from_user_id"])
+                            is_rate_limited = not is_not_rate_limited
+                            # is_rate_limited = True # for testing
+
+                            if is_rate_limited:
+                                rate_limit_payload = {
+                                    'chat_id': data["chat_id"],
+                                    'text': "⏳ Too many requests. Please try again shortly.",
+                                    'reply_to_message_id': data['message_id']
+                                }
+                                rate_limit_response_event = EventEnvelope(type='commands.gateway.reply',
+                                                                          correlation_id=correlation_id,
+                                                                          timestamp=datetime.now(
+                                                                              timezone.utc).isoformat(),
+                                                                          payload=rate_limit_payload,
+                                                                          version=1,
+                                                                          is_rate_limited=is_rate_limited)
+                                rate_limit_as_json = rate_limit_response_event.to_json()
+                                await ctx.safe_publish(
+                                    routing_key='gateway_events', body=rate_limit_as_json, exchange_name=''
+                                )
+                                ctx.logger.info("Request will not be handled. Recieved from rate limited user", extra={
+                                    'event_type': event_to_dispatch,
+                                    'payload': rate_limit_payload,
+                                })
+                                continue
+
                             event = EventEnvelope(type=event_to_dispatch,
                                                   correlation_id=correlation_id,
                                                   timestamp=datetime.now(
@@ -176,6 +204,7 @@ async def main() -> None:
                                     "Handler invocation failed")
 
                         case _:
+                            # TODO: publish these events to an DLQ
                             ctx.logger.warning(
                                 "Unknown event_type received.",
                                 extra={"event_type": event_type}

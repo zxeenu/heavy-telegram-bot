@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import Optional
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
@@ -15,6 +16,7 @@ from src.core.logging_context import set_correlation_id
 from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
 from src.handlers.download_cleanup_command import download_cleanup_command_handler
+from src.handlers.reply_command import reply_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 from src.core.rate_limiter import FixedWindowRateLimiter
 
@@ -152,6 +154,10 @@ def clean_telegram_payload(message: Message):
 
 
 def make_event_bus_handler(ctx: ServiceContainer):
+
+    authenticator = Authenticator()
+    rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
+
     async def event_bus_handler(client: Client, message: Message):
 
         correlation_id = str(uuid.uuid4())
@@ -159,7 +165,6 @@ def make_event_bus_handler(ctx: ServiceContainer):
 
         # Extract basic info
         from_user_id = getattr(message.from_user, 'id', 'UnknownUser')
-        authenticator = Authenticator()
         is_authenticated = authenticator.is_allowed(from_user_id)
 
         filtered_extras = clean_telegram_payload(message=message)
@@ -167,25 +172,24 @@ def make_event_bus_handler(ctx: ServiceContainer):
             ctx.logger.warning("Message skipped", extra=filtered_extras)
             return
 
-        rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
         is_not_rate_limited = await rate_limiter.is_allowed(from_user_id)
         is_rate_limited = not is_not_rate_limited
 
-        if is_rate_limited:
-            # TODO: We need to let the individual services reply back!
-            # because this will think event non commands need to be replied to
-            # or potentially, we can dispatch events right from gateway, instead
-            # of funneling the raw tg events. 
-            
-            # await client.send_message(
-            #     chat_id=message.chat.id,
-            #     text="⏳ Too many requests. Please try again shortly.",
-            #     reply_to_message_id=message.id
-            # )
-            ctx.logger.warning("Too many requests. Rate limited!", extra={
-                'from_user_id': from_user_id
-            })
-            return
+        # if is_rate_limited:
+        # TODO: We need to let the individual services reply back!
+        # because this will think event non commands need to be replied to
+        # or potentially, we can dispatch events right from gateway, instead
+        # of funneling the raw tg events.
+
+        # await client.send_message(
+        #     chat_id=message.chat.id,
+        #     text="⏳ Too many requests. Please try again shortly.",
+        #     reply_to_message_id=message.id
+        # )
+        # ctx.logger.warning("Too many requests. Rate limited!", extra={
+        #     'from_user_id': from_user_id
+        # })
+        # return
 
         try:
             message_dict = to_serializable(obj=message)
@@ -201,7 +205,8 @@ def make_event_bus_handler(ctx: ServiceContainer):
                               timestamp=datetime.now(
                                   timezone.utc).isoformat(),
                               payload=message_dict,
-                              version=1)
+                              version=1,
+                              is_rate_limited=is_rate_limited)
         event_as_json = event.to_json()
 
         await ctx.safe_publish(
@@ -278,6 +283,8 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
                         case 'commands.gateway.downloads-cleanup':
                             await download_cleanup_command_handler(ctx=ctx, payload=body.get('payload', {}))
+                        case 'commands.gateway.reply':
+                            await reply_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
 
                         # Add more cases here as needed
                         case _:

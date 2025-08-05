@@ -11,6 +11,7 @@ class EventEnvelope:
     correlation_id: str
     timestamp: str
     payload: dict
+    is_rate_limited: bool = False
 
     @staticmethod
     def from_dict(d: dict) -> "EventEnvelope":
@@ -20,6 +21,7 @@ class EventEnvelope:
             correlation_id=d.get("correlation_id", ""),
             timestamp=d.get("timestamp", ""),
             payload=d.get("payload", {}),
+            is_rate_limited=d.get("is_rate_limited", False),
         )
 
     def to_json(self) -> str:

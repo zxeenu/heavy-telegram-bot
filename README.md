@@ -13,10 +13,27 @@ This repository contains the core infrastructure and microservices for an event-
 - **Event Choreography over Orchestration** - Services react to events independently
 - **Saga Pattern** - Distributed workflow without central coordinator
 - **Interest Accumulation** - An approach to handling concurrent requests
+- **Rate Limiting** - Limiting usage of services
 
 ### Interest Accumulation
 
 When multiple users request the same media file, we track their interest via a shared Redis key (based on content hash or normalized URL). Once the download completes, all interested parties are notified. This prevents duplicate downloads and reduces resource use.
+
+### Rate limiting
+
+Strategy: Fixed Window Rate Limiting with TTL
+
+This strategy limits how many actions a user can perform within a fixed time window. It uses a Redis key per user (e.g. rate:user:<id>) to count requests. The counter resets after a set TTL (e.g. 60 seconds), allowing automatic cleanup. If the request count exceeds the allowed limit during the window, further requests are denied until the TTL expires.
+
+Since we are publishing raw telegram events from Gateway into the message broker we can't blindly increment the usage count with this event. Instead, we are allowing services to decide when to increment the usage count. **This should be done after meaningful events.**
+
+#### Note:
+
+The Gateway does not know what any of the services do, so we cant handle this logic inside it. Taking the event parsing logic from other services and putting it in Gateway will unfortunately become unmaintainable as there are more services - it would also lead to use maintaining multiples places with the same parsing logic.
+
+Normalizing telegram events to application events in the Gateway is a solution. This would make things more robust and structured, but would also make add more features more involved. But would also go against choreographing events.
+
+In favor on keeping things easy to extend for now, we will be delegating rate limiting to the service level.
 
 ## Security Model
 
@@ -108,15 +125,7 @@ The Gateway service is a Python application that listens to Telegram events usin
 - Computes time taken for event to be received into Gateway and dispatched out of Gateway
 - Speeds up user response by reusing videos and audios already uploaded to Telegram if available via a Redis hashmap. If the uploaded link is expired, we default to fetching the data from object storage via a presigned url.
 - Cleans up files saved to disk via an Redis counter. Files are deleted oldest first.
-- Handles rate limiting of meaningful events.
-
-#### Rate limiting
-
-Strategy: Fixed Window Rate Limiting with TTL
-
-This strategy limits how many actions a user can perform within a fixed time window. It uses a Redis key per user (e.g. rate:user:<id>) to count requests. The counter resets after a set TTL (e.g. 60 seconds), allowing automatic cleanup. If the request count exceeds the allowed limit during the window, further requests are denied until the TTL expires.
-
-Since we are publishing raw telegram events from Gateway into the message broker we can't blindly increment the usage count with this event. Instead, we are allowing services to decide when to increment the usage count. **This should be done after meaningful events.**
+- Adds metadata to the event envelope letting subscribers know if the event comes from a user that has been rate limited
 
 ### Task Roadmap
 
@@ -126,7 +135,6 @@ Since we are publishing raw telegram events from Gateway into the message broker
 - [ ] Add support for dynamically allowing other users to interact with certain functionality
 - [x] Implement basic authentication
 - [ ] Implement dynamic authorization and only publish events that have to be worked on
-- [x] Implement rate limiting
 - [ ] Implement OpenTelemetry with `contextvars` correlation support
 - [ ] Implement Redis TTL-based heartbeat for service health
 
@@ -163,8 +171,9 @@ MediaPirate is a distributed content relay and command system designed to experi
 - Associating logs with correlation IDs handling using `contextvars`
 - Injecting `correlation_id` received from Gateway for inter-service context-aware logging
 - Content-Based Addressing for object storage
-- Fetching from youtube, tiktok is handled in an idempotent manner
+- Fetching from Youtube, Tiktok, and anything else that is supported by `yt-dlp` is handled in an idempotent manner
 - Enriches stored documents with meta data for future analytics
+- Rate limits usage based on time and user.
 
 #### Content-Based Addressing
 
