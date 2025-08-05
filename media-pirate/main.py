@@ -61,16 +61,39 @@ TELEGRAM_COMMAND_TO_EVENT = {
 async def main() -> None:
     ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
     ctx.logger.info("MediaPirate Service started!")
-
     rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
 
-    async def after_event_handling(user_id: str):
+    async def after_tg_event_handling(data: NormalizedTelegramPayload, correlation_id: str):
+        user_id = data['from_user_id']
         meaningul_use_count = await rate_limiter.increment(user_id=user_id)
         ctx.logger.info("Rate limit incremented", extra={
             'from_user_id': user_id,
             'meaningul_use_count': meaningul_use_count
         })
-        pass
+
+        # lets be optimistic and let the user know we are doing __something__
+        payload = {
+            'chat_id': data["chat_id"],
+            'text': "🫡 Let me process that for you.",
+            'reply_to_message_id': data['message_id'],
+            'persistence_key': "optimistic_reply"
+        }
+
+        event_envelope = EventEnvelope(type='commands.gateway.reply',
+                                       correlation_id=correlation_id,
+                                       timestamp=datetime.now(
+                                           timezone.utc).isoformat(),
+                                       payload=payload,
+                                       version=1,
+                                       is_rate_limited=False)
+        event_as_json = event_envelope.to_json()
+        await ctx.safe_publish(
+            routing_key='gateway_events', body=event_as_json, exchange_name=''
+        )
+        ctx.logger.info("Letting the user know that we have begun processing his request", extra={
+            'payload': payload,
+        })
+        return
 
     async with ctx.connection as connection:
         channel = await connection.channel()
@@ -180,7 +203,7 @@ async def main() -> None:
                             ctx.logger.info("Telegram command mapped to a command handler", extra={
                                 'event_type': event_to_dispatch
                             })
-                            await after_event_handling(user_id=data['from_user_id'])
+                            await after_tg_event_handling(data=data, correlation_id=correlation_id)
 
                         # Add more cases here as needed
                         case 'commands.media.video_download':

@@ -19,6 +19,7 @@ from src.handlers.download_cleanup_command import download_cleanup_command_handl
 from src.handlers.reply_command import reply_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 from src.core.rate_limiter import FixedWindowRateLimiter
+from src.telegram_message_helper import optimistic_reply_cleanup
 
 
 # Convert message to serializable JSON
@@ -221,6 +222,7 @@ def make_event_bus_handler(ctx: ServiceContainer):
 # Background task example
 async def background_task(telegram_app: Client, ctx: ServiceContainer):
 
+    # lifescyle hook to be used
     async def after_event_handling():
         key = "cleanup_event_counter"
         count = await ctx.redis.incr(key)
@@ -229,12 +231,12 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
         if count >= 100:
             await ctx.redis.delete(key)
             await downloads_cleanup_dispatcher(ctx=ctx, max_delete=100)
-        pass
+        return
 
     async def cleanup_redis(correlation_id_str: str):
         await ctx.redis.hdel(
             f"correlation_id:{correlation_id_str}", 'start_time')
-        pass
+        return
 
     async with ctx.connection as connection:
         channel = await connection.channel()
@@ -278,11 +280,16 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                         case 'events.dl.video.ready':
                             await video_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+                            await cleanup_redis(correlation_id)
+
                         case 'events.dl.audio.ready':
                             await audio_ready_event_handler(
                                 ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+                            await cleanup_redis(correlation_id)
+
                         case 'commands.gateway.downloads-cleanup':
                             await download_cleanup_command_handler(ctx=ctx, payload=body.get('payload', {}))
+
                         case 'commands.gateway.reply':
                             await reply_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
 
@@ -294,7 +301,6 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                                 })
                             pass
 
-                    await cleanup_redis(correlation_id)
                     await after_event_handling()
 
 

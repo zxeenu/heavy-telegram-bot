@@ -14,6 +14,8 @@ from src.core.logging_context import get_correlation_id
 from src.core.service_container import ServiceContainer
 from time import time
 
+from src.telegram_message_helper import optimistic_reply_cleanup
+
 
 VIDEO_CACHE_TTL = 600  # 10 minutes
 VIDEO_CACHE_INTEREST_ACC_TTL = 500
@@ -90,6 +92,10 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         )
         return
 
+    start_time_raw = await ctx.redis.hget(
+        f"correlation_id:{correlation_id}", "start_time"
+    )
+
     ctx.logger.info(
         "Acquired interest lock", extra={
             'object_name': object_name,
@@ -97,12 +103,10 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             'interest_key': get_interest_accumulator_key(),
             'interest_value': "ongoing",  # The value you set
             'ttl': VIDEO_CACHE_INTEREST_ACC_TTL,
-            'object_name': object_name
+            'object_name': object_name,
+            'gateway_dispatch_time': start_time_raw
         })
 
-    start_time_raw = await ctx.redis.hget(
-        f"correlation_id:{correlation_id}", "start_time"
-    )
     start_unix = float(start_time_raw)  # works even if still bytes
 
     def get_elapsed_time() -> ElapsedTime:
@@ -131,7 +135,7 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         })
 
         final_caption = (
-            f"**Download Complete**\n"
+            f"🚀 **Download Complete**\n"
             f"Took: __{cashed_file_metrics['human_readable_elapsed_time']}__\n"
             f"ID: `{correlation_id}`"
         )
@@ -141,6 +145,7 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             # let it expire or lets catch this
             # await ctx.redis.delete(f"video_content:{object_name}")
             await ctx.redis.delete(get_interest_accumulator_key())
+            await optimistic_reply_cleanup(ctx=ctx, telegram_app=telegram_app)
             return
         except Exception as e:
             ctx.logger.warning(
@@ -210,6 +215,7 @@ async def video_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
     #     f"video_content", object_name, file_id)
     await ctx.redis.set(f"video_content:{object_name}", file_id, ex=VIDEO_CACHE_TTL)
     await ctx.redis.delete(get_interest_accumulator_key())
+    await optimistic_reply_cleanup(ctx=ctx, telegram_app=telegram_app)
     ctx.logger.info("File uploaded to telegram, and cached locally", extra={
         'file_id': file_id
     })
