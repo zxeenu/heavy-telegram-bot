@@ -54,7 +54,7 @@ This works very similarly to how `useContext` works in React. We use it when we 
 This provides us a very easy way to generate deterministic keys derived from the `correlation_id`.
 
 ```python
-key = f"correlation_id:{message_id}:when-user-did-an-important-thing"
+key = f"correlation_id:{correlation_id}:when-user-did-an-important-thing:message-id"
 ```
 
 This application uses such correlation keys, to put values in Redis. This basically... lets us share global state across the entire system. Its fast, its light, you can make them self-clean with expiries.
