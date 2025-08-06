@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import os
 from typing import Optional
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import set_correlation_id
@@ -58,9 +59,30 @@ TELEGRAM_COMMAND_TO_EVENT = {
 }
 
 
+async def bootstrap(ctx: ServiceContainer) -> None:
+    ctx.logger.info("Booting up MediaPirate!")
+    bucket_name = os.environ.get("S3_BUCKET_NAME")
+
+    if not bucket_name:
+        raise Exception("Bucket name not set!")
+
+    minio_client = ctx.minio
+
+    bucket_exists = await asyncio.to_thread(minio_client.bucket_exists, bucket_name)
+    if not bucket_exists:
+        await asyncio.to_thread(minio_client.make_bucket, bucket_name)
+        ctx.logger.info(
+            f"Bucket '{bucket_name}' created (private by default).")
+    else:
+        ctx.logger.info(f"Bucket '{bucket_name}' already exists.")
+
+
 async def main() -> None:
     ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
     ctx.logger.info("MediaPirate Service started!")
+
+    await bootstrap(ctx=ctx)
+
     rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
 
     async def after_tg_event_handling(data: NormalizedTelegramPayload, correlation_id: str):
