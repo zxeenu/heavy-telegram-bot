@@ -17,6 +17,7 @@ from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
 from src.handlers.download_cleanup_command import download_cleanup_command_handler
 from src.handlers.reply_command import reply_command_handler
+from src.handlers.update_command import update_message_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 from src.core.rate_limiter import FixedWindowRateLimiter
 from src.telegram_message_helper import optimistic_reply_cleanup
@@ -292,6 +293,9 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
 
                         case 'commands.gateway.reply':
                             await reply_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
+
+                        case 'commands.gateway.message-update':
+                            await update_message_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
 
                         # Add more cases here as needed
                         case _:
