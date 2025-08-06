@@ -10,10 +10,56 @@ This repository contains the core infrastructure and microservices for an event-
 
 ## Architecture Decisions
 
+- **Correlation Context** - Handling `correlation_id` in a sane manner
 - **Event Choreography over Orchestration** - Services react to events independently
 - **Saga Pattern** - Distributed workflow without central coordinator
 - **Interest Accumulation** - An approach to handling concurrent requests
 - **Rate Limiting** - Limiting usage of services
+
+### Correlation Context
+
+_A Correlation ID is a unique identifier that is added to the very first interaction (incoming request) to identify the context and is passed to all components._ - Microsoft
+
+This system does the same. When an event is recieved from Telegram into Gateway, we generate a `correlation_id` (a uuid) and associate the Telegram payload with it. This `correlation_id` is passed into the message queue, so that the other services that recieve it also have access to it.
+
+We rely on the `correlation_id` to log data. This is so then when you look at logs, you know exactly which event is being processed. It became a bit cumbersome to drill this value into functions, just to make the logging sane.
+
+So in Gateway and MediaPirate, we rely on `contextvars`
+
+```python
+import contextvars
+
+correlation_id_var = contextvars.ContextVar("correlation_id", default="-")
+
+
+def set_correlation_id(corr_id: str) -> None:
+   correlation_id_var.set(corr_id)
+
+
+def get_correlation_id() -> str:
+   return correlation_id_var.get()
+
+```
+
+When you set the `correlation_id` with this at either creation or inheriting it, you have access to it to all decendants in that function call. In a loop, if you set the `correlation_id` at the top, all invoked functions, and all the functions these functions in turn invoke (all the way down the callstack) will all have access to it with the `get_correlation_id()` function. And it will provide the correct `correlation_id`.
+
+Since we are setting the `correlation_id` the top level, it is correctly set at every iteration of the loop. The loop this system is concerned about is the event loop that rabbit mq publishes.
+
+With this method, we have a global access to the `correlation_id` for the entire lifecycle any event. This includes the functions invoked in a given iteration of the event loop.
+
+This works very similarly to how `useContext` works in React. We use it when we dont want drill props into components and functions.
+
+#### Correlation Keys
+
+This provides us a very easy way to generate deterministic keys derived from the `correlation_id`.
+
+```python
+key = f"correlation_id:{message_id}:when-user-did-an-important-thing"
+```
+
+This application uses such correlation keys, to put values in Redis. This basically... lets us share global state across the entire system. Its fast, its light, you can make them self-clean with expiries.
+
+Eg: This lets Gateway set a correlation key, and then have MediaPirate have access to it. It works much the same way a global state management solution would work in React.
 
 ### Interest Accumulation
 
