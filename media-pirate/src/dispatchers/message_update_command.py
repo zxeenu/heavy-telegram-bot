@@ -53,5 +53,5 @@ async def download_error_message_dispatcher(ctx: ServiceContainer):
             "Missing chat_id")
         return
 
-    await message_update_command_dispatcher(ctx=ctx, chat_id=chat_id, message_id=message_id, text="💣 Unsupported source")
+    await message_update_command_dispatcher(ctx=ctx, chat_id=chat_id, message_id=message_id, text="💣 Didn't work.")
     return
