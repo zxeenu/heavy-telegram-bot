@@ -85,23 +85,130 @@ async def bootstrap(ctx: ServiceContainer) -> None:
 @dataclass
 class AppContext:
     services: ServiceContainer
+    rate_limiter: FixedWindowRateLimiter
 
 
 router = EventRouter[AppContext]()
 
 
-@router.route(event_type="events.dl.video.ready",
+@router.route(event_type="events.telegram.raw",
               version=1,
               options={
-                  'middleware_after': ["correlation_guard_prepare"],
                   'retry_attempt': 1,
-                  "middleware_before": ['correlation_guard_validate']
+                  "middleware_before": ["correlation_guard_prepare"],
+                  'middleware_after': ["correlation_guard_validate", 'maybe_rate_limit_increment'],
               })
-async def handle_video(envelope: EventEnvelope, context: AppContext):
-    # await asyncio.sleep(2 + random.uniform(0, 1))
-    print("hello world bro!")
-    print(context, envelope)
-    return 'yea'
+async def handle_raw_telegram_events(envelope: EventEnvelope, context: AppContext):
+    ctx = context.services
+    rate_limiter = context.rate_limiter
+    correlation_id = get_correlation_id()
+
+    data = normalize_telegram_payload(envelope.payload)
+    ctx.logger.info(
+        f"Event received successfully",
+        extra=data)
+
+    filtered_parts = data.get("filtered_parts", [])
+    command_word: Optional[str] = filtered_parts[0] if filtered_parts else None
+    ctx.logger.info("Command word located.", extra={
+                    "command_word": command_word})
+
+    if not command_word:
+        ctx.logger.warning(
+            "Message does not contain any actionable keywords. Skipping.")
+        return
+
+    event_to_dispatch = TELEGRAM_COMMAND_TO_EVENT.get(
+        command_word)
+    if not event_to_dispatch:
+        ctx.logger.error("Failed to process command. No configured mappings!", extra={
+            "event_type": "events.telegram.raw",
+        })
+        return
+
+    # Check if rate limited
+    is_not_rate_limited = await rate_limiter.is_allowed(data["from_user_id"])
+    is_rate_limited = not is_not_rate_limited
+    # is_rate_limited = True # for testing
+
+    if is_rate_limited:
+        rate_limit_payload = {
+            'chat_id': data["chat_id"],
+            'text': "⏳ Too many requests. Please try again shortly.",
+            'reply_to_message_id': data['message_id']
+        }
+        rate_limit_response_event = EventEnvelope(type='commands.gateway.reply',
+                                                  correlation_id=correlation_id,
+                                                  timestamp=datetime.now(
+                                                      timezone.utc).isoformat(),
+                                                  payload=rate_limit_payload,
+                                                  version=1,
+                                                  is_rate_limited=is_rate_limited)
+        rate_limit_as_json = rate_limit_response_event.to_json()
+        await ctx.safe_publish(
+            routing_key='gateway_events', body=rate_limit_as_json, exchange_name=''
+        )
+        ctx.logger.info("Request will not be handled. Received from rate limited user", extra={
+            'event_type': event_to_dispatch,
+            'payload': rate_limit_payload,
+        })
+        return
+
+    # TODO: if events are too old, do not process them
+
+    event = EventEnvelope.create(type=event_to_dispatch,
+                                 correlation_id=correlation_id,
+                                 payload=envelope.payload)
+    event_as_json = event.to_json()
+    await ctx.safe_publish(
+        routing_key='telegram_events', body=event_as_json, exchange_name=''
+    )
+    ctx.logger.info("Telegram command mapped to a command handler", extra={
+        'event_type': event_to_dispatch
+    })
+    envelope.payload["_increase_rate_limit"] = True
+
+
+@router.register_middleware(name='maybe_rate_limit_increment')
+async def handle_rate_limit_usage_increment(envelope: EventEnvelope, context: AppContext):
+
+    control_flag = envelope.payload.get("_increase_rate_limit")
+    if not control_flag:
+        return True
+
+    ctx = context.services
+    rate_limiter = context.rate_limiter
+    correlation_id = get_correlation_id()
+
+    data = normalize_telegram_payload(envelope.payload)
+
+    user_id = data['from_user_id']
+    meaningul_use_count = await rate_limiter.increment(user_id=user_id)
+    ctx.logger.info("Rate limit incremented", extra={
+        'from_user_id': user_id,
+        'meaningul_use_count': meaningul_use_count
+    })
+
+    # lets be optimistic and let the user know we are doing __something__
+    payload = {
+        'chat_id': data["chat_id"],
+        'text': "🫡 Let me process that for you.",
+        'reply_to_message_id': data['message_id'],
+        'persistence_key': "optimistic_reply"
+    }
+
+    event_envelope = EventEnvelope.create(type='commands.gateway.reply',
+                                          correlation_id=correlation_id,
+                                          payload=payload,
+                                          is_rate_limited=False)
+    event_as_json = event_envelope.to_json()
+    await ctx.safe_publish(
+        routing_key='gateway_events', body=event_as_json, exchange_name=''
+    )
+    ctx.logger.info("Letting the user know that we have begun processing his request", extra={
+        'payload': payload,
+    })
+    return True
 
 
 @router.register_before_middleware(name="correlation_guard_prepare")
@@ -121,22 +228,23 @@ async def correlation_guard_validate(envelope: EventEnvelope, context: AppContex
 
 @router.register_before_middleware(name='logger')
 async def log_event_start(envelope: EventEnvelope, context: AppContext):
-    print(f"⏱️ Handling {envelope.type} - {envelope.correlation_id}")
-    return 'logger!!'
+    ctx = context.services
+    ctx.logger.info(f"⏱️ Handling {envelope.type}")
+    return True
 
 
 @router.register_after_middleware(name='maybe_cleanup')
 async def maybe_cleanup(envelope: EventEnvelope, context: AppContext):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print(f"correlation_id:{envelope.correlation_id}", 'start_time')
-    return 'bobbin'
+    return True
 
 
 @router.register_middleware(name='rediis_clea')
 async def maybe_cleanfup(envelope: EventEnvelope, context: AppContext):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print(f"correlation_id:{envelope.correlation_id}", 'REDDDESS')
-    return 'redboi'
+    return True
 
 # TODO: need to implement a retry mechanism
 
@@ -144,7 +252,9 @@ async def maybe_cleanfup(envelope: EventEnvelope, context: AppContext):
 async def main() -> None:
 
     ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
+
     await bootstrap(ctx=ctx)
+    rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
 
     ctx.logger.info("MediaPirate Service started!")
 
@@ -153,20 +263,8 @@ async def main() -> None:
     set_correlation_id('efllfo world')
     router.set_context_type(AppContext)
 
-    envelope = EventEnvelope.create(type='events.dl.video.ready', payload={
-        'video_link': 'google.com'}, correlation_id='bobs')
-    result_set = await router.dispatch(
-        envelope=envelope,
-        context=AppContext(
-            services=ctx
-        )
-    )
-    print(result_set)
-    return
-
-    await bootstrap(ctx=ctx)
-
-    rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
+    # envelope = EventEnvelope.create(type='events.dl.video.ready', payload={
+    #     'video_link': 'google.com'}, correlation_id='bobs')
 
     async def after_tg_event_handling(data: NormalizedTelegramPayload, correlation_id: str):
         user_id = data['from_user_id']
@@ -225,11 +323,7 @@ async def main() -> None:
                             f"Error processing: {e}")
                         continue
 
-                    event_type: str = body.get('type', '')
-                    version = int(body.get('version')) if body.get(
-                        'version') is not None else None
                     correlation_id: str = body.get('correlation_id', '')
-                    timestamp: str = body.get('timestamp', '')
 
                     if not correlation_id:
                         ctx.logger.error(
@@ -238,11 +332,16 @@ async def main() -> None:
                             "correlation_id is required for all events")
 
                     set_correlation_id(correlation_id)
+                    envelope = EventEnvelope.from_dict(body)
 
-                    if version is None:
-                        ctx.logger.info(
-                            f"Event does not have a version. Malformed event payload.")
-                        continue
+                    result_set = await router.dispatch(
+                        envelope=envelope,
+                        context=AppContext(
+                            services=ctx,
+                            rate_limiter=rate_limiter
+                        )
+                    )
+                    continue
 
                     # Proper formatting with placeholders
                     match event_type:
