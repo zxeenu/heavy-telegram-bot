@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Callable, Awaitable, Dict, Any, Optional, List
+from dataclasses import dataclass, field
+from typing import Callable, Awaitable, Dict, Any, Optional, List, TypedDict
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import get_correlation_id
 from src.core.service_container import ServiceContainer
@@ -21,20 +22,38 @@ MiddlewareFunc = Callable[[EventEnvelope,
                            ServiceContainer], Awaitable[Optional[Any]]]
 
 
+class RouteOptionDict(TypedDict):
+    middleware_before: List[str] = []
+    middleware_after: List[str] = []
+    retry_attempt: int = 0
+
+
+@dataclass
+class RouteOption:
+    middleware_before: List[str] = field(default_factory=list)
+    middleware_after: List[str] = field(default_factory=list)
+    retry_attempt: int = 0
+
+
 class EventRouter:
     def __init__(self):
         # routes and meta data attached
         self.routes: Dict[str, Dict[int, HandlerFunc]] = defaultdict(dict)
-        self.route_meta_data: Dict[str, Dict[int, Dict]] = defaultdict(dict)
+        self.route_options: Dict[str,
+                                 Dict[int, RouteOption]] = defaultdict(dict)
 
         self.middlewares_before: List[str] = []
         self.middlewares_after: List[str] = []
         self.middlewares: Dict[str, MiddlewareFunc] = {}
 
-    def route(self, event_type: str, version: int = 1, meta_data: Optional[dict] = None) -> Callable[[HandlerFunc], HandlerFunc]:
+    def route(self, event_type: str, version: int = 1, options: RouteOptionDict | None = None) -> Callable[[HandlerFunc], HandlerFunc]:
+
+        # Normalize to RouteOption instance
+        route_options = RouteOption(**(options or {}))
+
         def decorator(func: HandlerFunc) -> HandlerFunc:
             self.routes[event_type][version] = func
-            self.route_meta_data[event_type][version] = meta_data
+            self.route_options[event_type][version] = route_options
             return func
         return decorator
 
@@ -49,7 +68,7 @@ class EventRouter:
 
     def register_middleware(self, name: str = None) -> Callable[[MiddlewareFunc], MiddlewareFunc]:
         """
-        These are regitered, but not active. Please use the `meta_data` in the `route` decorator to opt into middlewares
+        These are regitered, but not active. Please use the `options` in the `route` decorator to opt into middlewares
         """
 
         self._validate_middleware(actual_name=name)
@@ -118,20 +137,21 @@ class EventRouter:
                 f"No handler for {envelope.type} v{envelope.version}")
 
         handler_is_valid = has_params(
-            handler, ["ctx", "envelope", "meta_data"])
+            handler, ["ctx", "envelope", "options"])
         if not handler_is_valid:
             raise ValueError(
                 f"handler for {envelope.type} does not implement required parameters")
 
-        meta_data = self.route_meta_data.get(
-            envelope.type, {}).get(envelope.version, {})
-        extra_middleware_before: List[str] = meta_data.get(
-            'middleware_before', [])
+        options = self.route_options.get(
+            envelope.type, {}).get(envelope.version)
+        if options is None:
+            options = RouteOption()
+
+        extra_middleware_before = options.middleware_before
         all_middleware_before = self.middlewares_before + extra_middleware_before
         unique_middleware_before = list(dict.fromkeys(all_middleware_before))
 
-        extra_middleware_after: List[str] = meta_data.get(
-            'middleware_after', [])
+        extra_middleware_after = options.middleware_after
         all_middleware_after = self.middlewares_after + extra_middleware_after
         unique_middleware_after = list(dict.fromkeys(all_middleware_after))
 
@@ -151,7 +171,7 @@ class EventRouter:
             middlewares_before_results[middleware_name] = result
 
         handler_result = await handler(
-            ctx=ctx, envelope=envelope, meta_data=meta_data
+            ctx=ctx, envelope=envelope, options=options
         )
 
         middlewares_after_results = {}

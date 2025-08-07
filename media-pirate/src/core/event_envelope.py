@@ -14,7 +14,7 @@ class EventEnvelope:
     is_rate_limited: bool = False
 
     @staticmethod
-    def new(
+    def create(
         type: str,
         payload: dict,
         version: int = 1,

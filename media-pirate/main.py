@@ -84,8 +84,13 @@ async def bootstrap(ctx: ServiceContainer) -> None:
 router = EventRouter()
 
 
-@router.route(event_type="events.dl.video.ready", version=1, meta_data={'retry_attempt': 2, 'middleware_after': ['rediis_clea']})
-async def handle_video(ctx, envelope, meta_data):
+@router.route(event_type="events.dl.video.ready",
+              version=1,
+              options={
+                  'middleware_after': [],
+                  'retry_attempt': 1,
+              })
+async def handle_video(ctx, envelope, options):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print("hello world bro!")
     print(ctx, envelope)
@@ -117,8 +122,8 @@ async def maybe_cleanfup(envelope, ctx):
 async def main() -> None:
     ctx = {'yes', 'this is a ctx'}
     set_correlation_id('efllfo world')
-    envelope = EventEnvelope.new(type='events.dl.video.ready', payload={
-                                 'video_link': 'google.com'}, correlation_id='bobs')
+    envelope = EventEnvelope.create(type='events.dl.video.ready', payload={
+        'video_link': 'google.com'}, correlation_id='bobs')
     result_set = await router.dispatch(envelope=envelope, ctx=ctx)
     print(result_set)
     return
