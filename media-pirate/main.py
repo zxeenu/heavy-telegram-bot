@@ -5,7 +5,7 @@ import os
 from typing import Optional
 import yt_dlp
 from src.core.event_envelope import EventEnvelope
-from src.core.logging_context import set_correlation_id
+from src.core.logging_context import get_correlation_id, set_correlation_id
 from src.core.rate_limiter import FixedWindowRateLimiter
 from src.core.service_container import ServiceContainer
 from src.dispatchers.message_update_command import download_error_message_dispatcher
@@ -150,6 +150,12 @@ async def main() -> None:
                     correlation_id: str = body.get('correlation_id', '')
                     timestamp: str = body.get('timestamp', '')
 
+                    if not correlation_id:
+                        ctx.logger.error(
+                            "Fatal: Missing correlation_id in event payload")
+                        raise ValueError(
+                            "correlation_id is required for all events")
+
                     set_correlation_id(correlation_id)
 
                     if version is None:
@@ -266,6 +272,15 @@ async def main() -> None:
                                 "Unknown event_type received.",
                                 extra={"event_type": event_type}
                             )
+
+                    # Sanity check before completing
+                    actual_correlation_id = get_correlation_id()
+                    expected_correlation_id = correlation_id
+                    if actual_correlation_id != expected_correlation_id:
+                        raise RuntimeError(
+                            f"Context corruption detected! Expected {expected_correlation_id}, "
+                            f"got {actual_correlation_id}"
+                        )
 
 
 if __name__ == "__main__":
