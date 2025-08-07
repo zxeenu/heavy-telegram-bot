@@ -26,7 +26,7 @@ Originally, we were only relying on the `correlation_id` to log data. Without `c
 
 Normally, I would have just passed the `correlation_id` into a logger. But other than on the top most level, it becomes very difficult to uto that. You can imagine how a naive solution would have been to just have every single function you write have the parameter for `correlation_id`.
 
-It became a very bothersome to always juggle this value. I needed an easier way to do this. I imagined that something like React's `useContext` would have been very useful at this moment.
+It became very bothersome to juggle this value. I needed an easier way to do this. I imagined that something like React's `useContext` would have been very useful at this moment.
 
 So in Gateway and MediaPirate, we rely on `contextvars`
 
@@ -91,7 +91,7 @@ async with queue.iterator() as queue_iter:
 
 We validate the basic structure of the event payload, and then set it. Effectively, if if a bad payload is received, then we skip the iteration. We don't need to clean up the `correlation_id`, because it is only set for a valid payload.
 
-Please not that conditionally setting `correlation_id` in this function is a horrible idea, this will make the event handler remember a previous iterations `correlation_id`, and thus lead to incorrect contextual logging.
+Please note that conditionally setting `correlation_id` in this function is a horrible idea, this will make the event handler remember a previous iterations `correlation_id`, and thus lead to incorrect contextual logging.
 
 Unlike React's `useContext` which prevents prop drilling in component trees, `contextvars` prevents parameter drilling in call stacks.
 
