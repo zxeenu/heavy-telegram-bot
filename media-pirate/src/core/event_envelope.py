@@ -1,17 +1,35 @@
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import json
-
-# event = EventEnvelope.from_dict(json.loads(message.body.decode()))
+import uuid
 
 
 @dataclass
 class EventEnvelope:
     type: str
-    version: int
     correlation_id: str
+    version: int
     timestamp: str
     payload: dict
     is_rate_limited: bool = False
+
+    @staticmethod
+    def new(
+        type: str,
+        payload: dict,
+        version: int = 1,
+        correlation_id: str = str(uuid.uuid4()),
+        is_rate_limited: bool = False,
+        timestamp: str = datetime.now(timezone.utc).isoformat()
+    ) -> "EventEnvelope":
+        return EventEnvelope(
+            type=type,
+            version=version,
+            correlation_id=correlation_id,
+            timestamp=timestamp,
+            payload=payload,
+            is_rate_limited=is_rate_limited,
+        )
 
     @staticmethod
     def from_dict(d: dict) -> "EventEnvelope":

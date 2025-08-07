@@ -2,9 +2,11 @@ import asyncio
 import logging
 import json
 import os
+import random
 from typing import Optional
 import yt_dlp
 from src.core.event_envelope import EventEnvelope
+from src.core.event_router import EventRouter
 from src.core.logging_context import get_correlation_id, set_correlation_id
 from src.core.rate_limiter import FixedWindowRateLimiter
 from src.core.service_container import ServiceContainer
@@ -79,7 +81,47 @@ async def bootstrap(ctx: ServiceContainer) -> None:
         ctx.logger.info(f"Bucket '{bucket_name}' already exists.")
 
 
+router = EventRouter()
+
+
+@router.route(event_type="events.dl.video.ready", version=1, meta_data={'retry_attempt': 2, 'middleware_after': ['rediis_clea']})
+async def handle_video(ctx, envelope, meta_data):
+    # await asyncio.sleep(2 + random.uniform(0, 1))
+    print("hello world bro!")
+    print(ctx, envelope)
+    return 'yea'
+
+
+@router.register_before_middleware(name='logger')
+async def log_event_start(envelope, ctx):
+    print(f"⏱️ Handling {envelope.type} - {envelope.correlation_id}")
+    return 'logger!!'
+
+
+@router.register_after_middleware(name='maybe_cleanup')
+async def maybe_cleanup(envelope, ctx):
+    # await asyncio.sleep(2 + random.uniform(0, 1))
+    print(f"correlation_id:{envelope.correlation_id}", 'start_time')
+    return 'bobbin'
+
+
+@router.register_middleware(name='rediis_clea')
+async def maybe_cleanfup(envelope, ctx):
+    # await asyncio.sleep(2 + random.uniform(0, 1))
+    print(f"correlation_id:{envelope.correlation_id}", 'REDDDESS')
+    return 'redboi'
+
+# TODO: need to implement a retry mechanism
+
+
 async def main() -> None:
+    ctx = {'yes', 'this is a ctx'}
+    set_correlation_id('efllfo world')
+    envelope = EventEnvelope.new(type='events.dl.video.ready', payload={
+                                 'video_link': 'google.com'}, correlation_id='bobs')
+    result_set = await router.dispatch(envelope=envelope, ctx=ctx)
+    print(result_set)
+    return
     ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
     ctx.logger.info("MediaPirate Service started!")
 
