@@ -20,9 +20,13 @@ This repository contains the core infrastructure and microservices for an event-
 
 _A Correlation ID is a unique identifier that is added to the very first interaction (incoming request) to identify the context and is passed to all components._ - Microsoft
 
-This system does the same. When an event is recieved from Telegram into Gateway, we generate a `correlation_id` (a uuid) and associate the Telegram payload with it. This `correlation_id` is passed into the message queue, so that the other services that recieve it also have access to it.
+This system does the same. When an event is received from Telegram into Gateway, we generate a `correlation_id` (a uuid) and associate the Telegram payload with it. This `correlation_id` is passed into the message queue, so that the other services that receive it also have access to its origin.
 
-We rely on the `correlation_id` to log data. This is so then when you look at logs, you know exactly which event is being processed. It became a bit cumbersome to drill this value into functions, just to make the logging sane.
+Originally, we were only relying on the `correlation_id` to log data. Without `correlation_id`s, when a user sends a message that triggers multiple services, there's no way to trace that single user action across service boundaries. When something fails, you're left digging through logs from different services trying to piece together what belonged to the same user request.
+
+Normally, I would have just passed the `correlation_id` into a logger. But other than on the top most level, it becomes very difficult to uto that. You can imagine how a naive solution would have been to just have every single function you write have the parameter for `correlation_id`.
+
+It became a very bothersome to always juggle this value. I needed an easier way to do this. I imagined that something like React's `useContext` would have been very useful at this moment.
 
 So in Gateway and MediaPirate, we rely on `contextvars`
 
@@ -41,13 +45,157 @@ def get_correlation_id() -> str:
 
 ```
 
-When you set the `correlation_id` with this at either creation or inheriting it, you have access to it to all decendants in that function call. In a loop, if you set the `correlation_id` at the top, all invoked functions, and all the functions these functions in turn invoke (all the way down the callstack) will all have access to it with the `get_correlation_id()` function. And it will provide the correct `correlation_id`.
+When you set the `correlation_id` with this at either the point of creation or inheriting it from another service.
 
-Since we are setting the `correlation_id` the top level, it is correctly set at every iteration of the loop. The loop this system is concerned about is the event loop that rabbit mq publishes.
+Once you invoke the `set_correlation_id` function, it sets a `correlation_id`, and is accessible throughout the lifetime of this function - as long as you call the functions that handle the events inside this scope. So far under light load, in in async python, we have no had context corruption. It is not only accessible on the main function's context, but also all child functions all the way down the callstack.
 
-With this method, we have a global access to the `correlation_id` for the entire lifecycle any event. This includes the functions invoked in a given iteration of the event loop.
+In a loop, if you set the `correlation_id` at the top, all invoked functions, you are automatically setting the correct `correlation_id` for every iteration. It thus becomes a dead simple matter to call the `get_correlation_id()` function to get it.
 
-This works very similarly to how `useContext` works in React. We use it when we dont want drill props into components and functions.
+In MediaPirate, we listen to an event queue from RabbitMQ, and are looping over this. Every event in this queue has a `correlation_id`. This method allows us to have global access to the `correlation_id` for the entire lifecycle any event arbitrarily.
+
+#### Main Event Loop
+
+```python
+async with queue.iterator() as queue_iter:
+    async for message in queue_iter:
+        async with message.process():
+            body_str = message.body.decode()
+
+            try:
+                body = json.loads(body_str)
+            except json.JSONDecodeError:
+                ctx.logger.error(
+                    f"Invalid JSON in message")
+                # Do something with the malformed JSON's later
+                continue
+            except Exception as e:
+                ctx.logger.error(
+                    f"Error processing: {e}")
+                continue
+
+            event_type: str = body.get('type', '')
+            version = int(body.get('version')) if body.get(
+                'version') is not None else None
+            correlation_id: str = body.get('correlation_id', '')
+            timestamp: str = body.get('timestamp', '')
+
+            if not correlation_id:
+                ctx.logger.error(
+                    "Fatal: Missing correlation_id in event payload")
+                raise ValueError(
+                    "correlation_id is required for all events")
+
+            set_correlation_id(correlation_id)
+
+```
+
+We validate the basic structure of the event payload, and then set it. Effectively, if if a bad payload is received, then we skip the iteration. We don't need to clean up the `correlation_id`, because it is only set for a valid payload.
+
+Please not that conditionally setting `correlation_id` in this function is a horrible idea, this will make the event handler remember a previous iterations `correlation_id`, and thus lead to incorrect contextual logging.
+
+Unlike React's `useContext` which prevents prop drilling in component trees, `contextvars` prevents parameter drilling in call stacks.
+
+#### Example Code
+
+Invoking loggers.
+
+```python
+                    event_type: str = body.get('type', '')
+                    version = int(body.get('version')) if body.get(
+                        'version') is not None else None
+                    correlation_id: str = body.get('correlation_id', '')
+                    timestamp: str = body.get('timestamp', '')
+
+                    set_correlation_id(correlation_id)
+
+                    if version is None:
+                        ctx.logger.info(
+                            f"Event does not have a version. Malformed event payload.")
+                        continue
+
+                    # Proper formatting with placeholders
+                    match event_type:
+                        case 'events.telegram.raw':
+                            payload = body.get('payload', {})
+                            data = normalize_telegram_payload(payload)
+
+                            ctx.logger.info(
+                                f"Event received successfully",
+```
+
+The logger formatter. Essentially, the logger used in MediaPirate use this formatter. And this formatter gets the `correlation_id`, and simply adds it the logging output.
+
+```python
+class ContextualColorFormatter(logging.Formatter):
+    RESET = "\033[0m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    CYAN = "\033[36m"
+    MAGENTA = "\033[35m"
+    GRAY = "\033[90m"
+
+    LEVEL_COLOR = {
+        "DEBUG": CYAN,
+        "INFO": GREEN,
+        "WARNING": YELLOW,
+        "ERROR": RED,
+        "CRITICAL": MAGENTA,
+    }
+
+    STANDARD_ATTRS = logging.LogRecord(
+        name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
+    ).__dict__.keys()
+
+    def format(self, record):
+        # Add correlation ID
+        record.correlation_id = get_correlation_id()
+
+        # Colorize levelname and logger name
+        color = self.LEVEL_COLOR.get(record.levelname, self.RESET)
+        record.levelname = f"{color}{record.levelname}{self.RESET}"
+        record.name = f"{self.BLUE}{record.name}{self.RESET}"
+
+        # Get base log message
+        base_message = super().format(record)
+
+        # Extract custom extras
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in self.STANDARD_ATTRS and k != "message"
+        }
+
+        # Format extras nicely
+        if extras:
+            max_key_len = max(len(k) for k in extras)
+            extra_lines = "\n".join(
+                f"    {self.GRAY}{k.ljust(max_key_len)}{self.RESET} = {v!r}" for k, v in extras.items()
+            )
+            return f"{base_message}\n{self.CYAN}Extras:{self.RESET}\n{extra_lines}"
+        else:
+            return base_message
+```
+
+Event loop exit. We do this to prevent correlation context corruption.
+
+```python
+        case _:
+            # TODO: publish these events to an DLQ
+            ctx.logger.warning(
+                "Unknown event_type received.",
+                extra={"event_type": event_type}
+            )
+
+    # Sanity check before completing
+    actual_correlation_id = get_correlation_id()
+    expected_correlation_id = correlation_id
+    if actual_correlation_id != expected_correlation_id:
+        raise RuntimeError(
+            f"Context corruption detected! Expected {expected_correlation_id}, "
+            f"got {actual_correlation_id}"
+        )
+```
 
 #### Correlation Keys
 
