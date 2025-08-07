@@ -1,9 +1,10 @@
 import asyncio
+from dataclasses import dataclass
 import logging
 import json
 import os
 import random
-from typing import Optional
+from typing import Optional, TypedDict
 import yt_dlp
 from src.core.event_envelope import EventEnvelope
 from src.core.event_router import EventRouter
@@ -81,37 +82,58 @@ async def bootstrap(ctx: ServiceContainer) -> None:
         ctx.logger.info(f"Bucket '{bucket_name}' already exists.")
 
 
-router = EventRouter()
+@dataclass
+class AppContext:
+    services: ServiceContainer
+
+
+router = EventRouter[AppContext]()
 
 
 @router.route(event_type="events.dl.video.ready",
               version=1,
               options={
-                  'middleware_after': [],
+                  'middleware_after': ["correlation_guard_prepare"],
                   'retry_attempt': 1,
+                  "middleware_before": ['correlation_guard_validate']
               })
-async def handle_video(ctx, envelope, options):
+async def handle_video(envelope: EventEnvelope, context: AppContext):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print("hello world bro!")
-    print(ctx, envelope)
+    print(context, envelope)
     return 'yea'
 
 
+@router.register_before_middleware(name="correlation_guard_prepare")
+async def correlation_guard(envelope: EventEnvelope, context: AppContext):
+    envelope.payload["_correlation_snapshot"] = get_correlation_id()
+    return True
+
+
+@router.register_after_middleware(name="correlation_guard_validate")
+async def correlation_guard_validate(envelope: EventEnvelope, context: AppContext):
+    expected = envelope.payload.get("_correlation_snapshot")
+    actual = get_correlation_id()
+    if expected != actual:
+        raise RuntimeError("Context corruption detected")
+    return True
+
+
 @router.register_before_middleware(name='logger')
-async def log_event_start(envelope, ctx):
+async def log_event_start(envelope: EventEnvelope, context: AppContext):
     print(f"⏱️ Handling {envelope.type} - {envelope.correlation_id}")
     return 'logger!!'
 
 
 @router.register_after_middleware(name='maybe_cleanup')
-async def maybe_cleanup(envelope, ctx):
+async def maybe_cleanup(envelope: EventEnvelope, context: AppContext):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print(f"correlation_id:{envelope.correlation_id}", 'start_time')
     return 'bobbin'
 
 
 @router.register_middleware(name='rediis_clea')
-async def maybe_cleanfup(envelope, ctx):
+async def maybe_cleanfup(envelope: EventEnvelope, context: AppContext):
     # await asyncio.sleep(2 + random.uniform(0, 1))
     print(f"correlation_id:{envelope.correlation_id}", 'REDDDESS')
     return 'redboi'
@@ -120,15 +142,27 @@ async def maybe_cleanfup(envelope, ctx):
 
 
 async def main() -> None:
-    ctx = {'yes', 'this is a ctx'}
+
+    ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
+    await bootstrap(ctx=ctx)
+
+    ctx.logger.info("MediaPirate Service started!")
+
+    # override logger
+    router.set_logger(ctx.logger)
     set_correlation_id('efllfo world')
+    router.set_context_type(AppContext)
+
     envelope = EventEnvelope.create(type='events.dl.video.ready', payload={
         'video_link': 'google.com'}, correlation_id='bobs')
-    result_set = await router.dispatch(envelope=envelope, ctx=ctx)
+    result_set = await router.dispatch(
+        envelope=envelope,
+        context=AppContext(
+            services=ctx
+        )
+    )
     print(result_set)
     return
-    ctx = await ServiceContainer.create(log_name="MediaPirate", log_level=logging.INFO)
-    ctx.logger.info("MediaPirate Service started!")
 
     await bootstrap(ctx=ctx)
 
