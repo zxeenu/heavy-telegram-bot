@@ -15,6 +15,7 @@ This repository contains the core infrastructure and microservices for an event-
 - **Saga Pattern** - Distributed workflow without central coordinator
 - **Interest Accumulation** - An approach to handling concurrent requests
 - **Rate Limiting** - Limiting usage of services
+- **Event Router** - Dispatching events
 
 ### Correlation Context
 
@@ -56,37 +57,33 @@ In MediaPirate, we listen to an event queue from RabbitMQ, and are looping over 
 #### Main Event Loop
 
 ```python
-async with queue.iterator() as queue_iter:
-    async for message in queue_iter:
-        async with message.process():
-            body_str = message.body.decode()
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    body_str = message.body.decode()
 
-            try:
-                body = json.loads(body_str)
-            except json.JSONDecodeError:
-                ctx.logger.error(
-                    f"Invalid JSON in message")
-                # Do something with the malformed JSON's later
-                continue
-            except Exception as e:
-                ctx.logger.error(
-                    f"Error processing: {e}")
-                continue
+                    try:
+                        body = json.loads(body_str)
+                    except json.JSONDecodeError:
+                        ctx.logger.error(
+                            f"Invalid JSON in message")
+                        # Do something with the malformed JSON's later
+                        continue
+                    except Exception as e:
+                        ctx.logger.error(
+                            f"Error processing: {e}")
+                        continue
 
-            event_type: str = body.get('type', '')
-            version = int(body.get('version')) if body.get(
-                'version') is not None else None
-            correlation_id: str = body.get('correlation_id', '')
-            timestamp: str = body.get('timestamp', '')
+                    correlation_id: str = body.get('correlation_id', '')
 
-            if not correlation_id:
-                ctx.logger.error(
-                    "Fatal: Missing correlation_id in event payload")
-                raise ValueError(
-                    "correlation_id is required for all events")
+                    if not correlation_id:
+                        ctx.logger.error(
+                            "Fatal: Missing correlation_id in event payload")
+                        raise ValueError(
+                            "correlation_id is required for all events")
 
-            set_correlation_id(correlation_id)
-
+                    set_correlation_id(correlation_id)
+                    envelope = EventEnvelope.from_dict(body)
 ```
 
 We validate the basic structure of the event payload, and then set it. Effectively, if if a bad payload is received, then we skip the iteration. We don't need to clean up the `correlation_id`, because it is only set for a valid payload.
@@ -94,108 +91,6 @@ We validate the basic structure of the event payload, and then set it. Effective
 Please note that conditionally setting `correlation_id` in this function is a horrible idea, this will make the event handler remember a previous iterations `correlation_id`, and thus lead to incorrect contextual logging.
 
 Unlike React's `useContext` which prevents prop drilling in component trees, `contextvars` prevents parameter drilling in call stacks.
-
-#### Example Code
-
-Invoking loggers.
-
-```python
-                    event_type: str = body.get('type', '')
-                    version = int(body.get('version')) if body.get(
-                        'version') is not None else None
-                    correlation_id: str = body.get('correlation_id', '')
-                    timestamp: str = body.get('timestamp', '')
-
-                    set_correlation_id(correlation_id)
-
-                    if version is None:
-                        ctx.logger.info(
-                            f"Event does not have a version. Malformed event payload.")
-                        continue
-
-                    # Proper formatting with placeholders
-                    match event_type:
-                        case 'events.telegram.raw':
-                            payload = body.get('payload', {})
-                            data = normalize_telegram_payload(payload)
-
-                            ctx.logger.info(
-                                f"Event received successfully",
-```
-
-The logger formatter. Essentially, the logger used in MediaPirate use this formatter. And this formatter gets the `correlation_id`, and simply adds it the logging output.
-
-```python
-class ContextualColorFormatter(logging.Formatter):
-    RESET = "\033[0m"
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    CYAN = "\033[36m"
-    MAGENTA = "\033[35m"
-    GRAY = "\033[90m"
-
-    LEVEL_COLOR = {
-        "DEBUG": CYAN,
-        "INFO": GREEN,
-        "WARNING": YELLOW,
-        "ERROR": RED,
-        "CRITICAL": MAGENTA,
-    }
-
-    STANDARD_ATTRS = logging.LogRecord(
-        name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
-    ).__dict__.keys()
-
-    def format(self, record):
-        # Add correlation ID
-        record.correlation_id = get_correlation_id()
-
-        # Colorize levelname and logger name
-        color = self.LEVEL_COLOR.get(record.levelname, self.RESET)
-        record.levelname = f"{color}{record.levelname}{self.RESET}"
-        record.name = f"{self.BLUE}{record.name}{self.RESET}"
-
-        # Get base log message
-        base_message = super().format(record)
-
-        # Extract custom extras
-        extras = {
-            k: v for k, v in record.__dict__.items()
-            if k not in self.STANDARD_ATTRS and k != "message"
-        }
-
-        # Format extras nicely
-        if extras:
-            max_key_len = max(len(k) for k in extras)
-            extra_lines = "\n".join(
-                f"    {self.GRAY}{k.ljust(max_key_len)}{self.RESET} = {v!r}" for k, v in extras.items()
-            )
-            return f"{base_message}\n{self.CYAN}Extras:{self.RESET}\n{extra_lines}"
-        else:
-            return base_message
-```
-
-Event loop exit. We do this to prevent correlation context corruption.
-
-```python
-        case _:
-            # TODO: publish these events to an DLQ
-            ctx.logger.warning(
-                "Unknown event_type received.",
-                extra={"event_type": event_type}
-            )
-
-    # Sanity check before completing
-    actual_correlation_id = get_correlation_id()
-    expected_correlation_id = correlation_id
-    if actual_correlation_id != expected_correlation_id:
-        raise RuntimeError(
-            f"Context corruption detected! Expected {expected_correlation_id}, "
-            f"got {actual_correlation_id}"
-        )
-```
 
 #### Correlation Keys
 
@@ -228,6 +123,103 @@ The Gateway does not know what any of the services do, so we cant handle this lo
 Normalizing telegram events to application events in the Gateway is a solution. This would make things more robust and structured, but would also make adding new features more involved. This also goes against choreographing events.
 
 In favor on keeping things easy to extend for now, we will be delegating rate limiting to the service level.
+
+### Event Router
+
+The MediaPirate (and soon Gateway) implement a reducer pattern. This is quite an improvement from the original implementation, where we were calling functions inside a giant match case. The event router was implemented mostly because the nesting felt very unintuitive. It felt difficult to follow because how deeply you had to be inside to get the actual logic.
+
+This happens in the main function runner. All of the services needed were put inside a container and it was passed into the actual handlers. It was a functional approach.
+
+```python
+                        case 'commands.media.video_download':
+                            payload = body.get(
+                                'payload', {})
+                            data = normalize_telegram_payload(payload)
+                            try:
+                                await video_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                            except yt_dlp.utils.DownloadError as e:
+                                await download_error_message_dispatcher(ctx=ctx)
+                                ctx.logger.warning(f"DownloadError: {e}")
+                            except Exception:
+                                # TODO: send off to QuarterMaster
+                                ctx.logger.exception(
+                                    "Handler invocation failed")
+
+                        case 'commands.media.audio_download':
+                            payload = body.get(
+                                'payload', {})
+                            data = normalize_telegram_payload(payload)
+                            try:
+                                await audio_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=event_type, timestamp=timestamp, version=version, payload=data)
+                            except yt_dlp.utils.DownloadError as e:
+                                await download_error_message_dispatcher(ctx=ctx)
+                                ctx.logger.warning(f"DownloadError: {e}")
+                            except Exception:
+                                # TODO: send off to QuarterMaster
+                                ctx.logger.exception(
+                                    "Handler invocation failed")
+
+                        case _:
+                            # TODO: publish these events to an DLQ
+                            ctx.logger.warning(
+                                "Unknown event_type received.",
+                                extra={"event_type": event_type}
+                            )
+```
+
+`EventRouter` implementation. In this implementation all the event handlers and dependencies are registered via the `EventRouter`. This allows us to easily register any number of dependencies separately, and have them be automatically injected by the dispatcher. The DX is considerably better than before where you had to shove everything inside the the `ServiceContainer`.
+
+The `EventRouter` also implements middlewares, so unlike the original implementation, we can do sanity checks and additional computations before and after the actual handling logic.
+
+```python
+    # register dependencies
+    router.register(ctx)
+    router.register(rate_limiter)
+```
+
+```python
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                async with message.process():
+                    body_str = message.body.decode()
+
+                    try:
+                        body = json.loads(body_str)
+                    except json.JSONDecodeError:
+                        ctx.logger.error(
+                            f"Invalid JSON in message")
+                        # Do something with the malformed JSON's later
+                        continue
+                    except Exception as e:
+                        ctx.logger.error(
+                            f"Error processing: {e}")
+                        continue
+
+                    correlation_id: str = body.get('correlation_id', '')
+
+                    if not correlation_id:
+                        ctx.logger.error(
+                            "Fatal: Missing correlation_id in event payload")
+                        raise ValueError(
+                            "correlation_id is required for all events")
+
+                    set_correlation_id(correlation_id)
+                    envelope = EventEnvelope.from_dict(body)
+
+                    route = router.get_route(envelope=envelope)
+
+                    if not route:
+                        ctx.logger.warning(
+                            "Unknown event_type received.",
+                            extra={"event_type": envelope.type}
+                        )
+
+                    result_set = await router.dispatch(
+                        envelope=envelope
+                    )
+                    ctx.logger.info(result_set)
+                    continue
+```
 
 ## Security Model
 

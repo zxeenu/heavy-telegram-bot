@@ -1,10 +1,9 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 import logging
-from typing import Callable, Awaitable, Dict, Any, Generic, Optional, List, Type, TypeVar, TypedDict, Protocol, runtime_checkable
+from typing import Callable, Awaitable, Dict, Any, Optional, List, Type, TypedDict, get_type_hints
 from src.core.event_envelope import EventEnvelope
 from src.core.logging_context import get_correlation_id
-from src.core.service_container import ServiceContainer
 import inspect
 
 
@@ -75,44 +74,52 @@ class RouteOption:
     retry_attempt: int = 0
 
 
-ContextType = TypeVar('T')
-
-HandlerFunc = Callable[[ContextType, EventEnvelope],
+HandlerFunc = Callable[[Any, EventEnvelope],
                        Awaitable[Optional[Any]]]
 MiddlewareFunc = Callable[[EventEnvelope,
-                           ContextType], Awaitable[Optional[Any]]]
+                           Any], Awaitable[Optional[Any]]]
 
 
-class EventRouter(Generic[ContextType]):
+class EventRouter():
     """
-    `ContextType` the depdendency container to be injected 
-    into the handler and middlewar methods
+    WARNING:
+    This module defines the EventRouter core and must remain independent.
+    To avoid circular import issues, do NOT import this module inside any handler,
+    middleware, or service modules that are themselves imported by EventRouter.
+
+    All handlers, middleware, and service registrations should be done
+    externally (e.g., in the main application entrypoint) to keep
+    a clean dependency direction and prevent import cycles.
+
+    Event router does a simple depdency injection via registered instances of a class
+    into the handler and middleware methods
     """
 
     logger: logging.Logger
-    _context_type: Optional[Type[ContextType]]
+
+    routes: Dict[str, Dict[int, HandlerFunc]]
+    route_options: Dict[str, Dict[int, RouteOption]]
+
+    middlewares: Dict[str, MiddlewareFunc]
+    middlewares_before: List[str]
+    middlewares_after: List[str]
+
+    registry: Dict[Type[Any], Any]  # registered dependencies
 
     def __init__(self):
         # routes and meta data attached
-        self.routes: Dict[str, Dict[int, HandlerFunc]] = defaultdict(dict)
-        self.route_options: Dict[str,
-                                 Dict[int, RouteOption]] = defaultdict(dict)
-
-        self.middlewares_before: List[str] = []
-        self.middlewares_after: List[str] = []
-        self.middlewares: Dict[str, MiddlewareFunc] = {}
+        self.routes = defaultdict(dict)
+        self.route_options = defaultdict(dict)
+        self.middlewares_before = []
+        self.middlewares_after = []
+        self.middlewares = {}
         self.logger = logging.getLogger(__name__)
-        self._context_type = None  # delayed until service container is available
+        self.registry = {}
 
     def set_logger(self, logger: logging.Logger):
         """Must be called once the service container is available."""
         self.logger = logger
         self.logger.debug(f"Logger set to {logger}")
-
-    def set_context_type(self, context_type: Type[ContextType]):
-        """Must be called once the service container is available."""
-        self._context_type = context_type
-        self.logger.debug(f"Context type set to {context_type}")
 
     def route(self, event_type: str, version: int = 1, options: RouteOptionDict | None = None) -> Callable[[HandlerFunc], HandlerFunc]:
 
@@ -144,7 +151,7 @@ class EventRouter(Generic[ContextType]):
 
         def decorator(func: MiddlewareFunc) -> MiddlewareFunc:
             middleware_is_valid = has_params(
-                func, ["context", "envelope"])
+                func, ["envelope"])
 
             if not middleware_is_valid:
                 raise ValueError(
@@ -162,7 +169,7 @@ class EventRouter(Generic[ContextType]):
         def decorator(func: MiddlewareFunc) -> MiddlewareFunc:
 
             middleware_is_valid = has_params(
-                func, ["context", "envelope"])
+                func, ["envelope"])
 
             if not middleware_is_valid:
                 raise ValueError(
@@ -181,7 +188,7 @@ class EventRouter(Generic[ContextType]):
         def decorator(func: MiddlewareFunc) -> MiddlewareFunc:
 
             middleware_is_valid = has_params(
-                func, ["context", "envelope"])
+                func, ["envelope"])
 
             if not middleware_is_valid:
                 raise ValueError(
@@ -192,21 +199,38 @@ class EventRouter(Generic[ContextType]):
             return func
         return decorator
 
+    def register(self, instance):
+        """register injectable dependencies"""
+        self.registry[type(instance)] = instance
+
+    async def call_with_injected_deps(self, fn, **kwargs):
+        """only to be called internally"""
+        hints = get_type_hints(fn)
+        for name, dep_type in hints.items():
+            if name != "return" and name not in kwargs:
+                if dep_type in self.registry:
+                    # This will overwrite any existing arg if it happens to be `None``
+                    kwargs[name] = self.registry[dep_type]
+                else:
+                    raise RuntimeError(
+                        f"No registered instance for type {dep_type}")
+        return await fn(**kwargs)
+
+    def get_route(self, envelope: EventEnvelope):
+        return self.routes.get(envelope.type, {}).get(envelope.version)
+
     async def dispatch(
-        self, envelope: EventEnvelope, context: ContextType
+        self, envelope: EventEnvelope
     ) -> Dict[str, Any]:
         """
         Dispatches an event to the appropriate handler.
-        Checks that the context is of the correct type.
         """
-        if self._context_type is not None and not isinstance(context, self._context_type):
-            raise TypeError(
-                f"Context must be of type {self._context_type.__name__}, "
-                f"got {type(context).__name__}"
-            )
-        elif self._context_type is None:
-            self.logger.warning(
-                "Dispatching without context type check (context type not set)")
+
+        # payload that all functions are injected with - unconditionally.
+        # this of it like the  `request` in an http request handler
+        handler_payload = {
+            "envelope": envelope
+        }
 
         handler = self.routes.get(envelope.type, {}).get(envelope.version)
         if not handler:
@@ -214,7 +238,7 @@ class EventRouter(Generic[ContextType]):
             raise RouteNotFoundError(envelope.type, envelope.version)
 
         handler_is_valid = has_params(
-            handler, ["context", "envelope"])
+            handler, ["envelope"])
         if not handler_is_valid:
             raise HandlerSignatureError(envelope.type)
 
@@ -233,30 +257,28 @@ class EventRouter(Generic[ContextType]):
 
         middlewares_before_results = {}
         for middleware_name in unique_middleware_before:
-            middleware = self.middlewares.get(middleware_name)
-            if not middleware:
+            middleware_handler = self.middlewares.get(middleware_name)
+            if not middleware_handler:
                 raise MiddlewareRegistrationError(
                     middleware_name, "No before middleware registered")
 
-            result = await middleware(envelope=envelope, context=context)
+            result = await self.call_with_injected_deps(middleware_handler, **handler_payload)
 
             if not result:
                 raise MiddlewareExecutionError(middleware_name, "before")
 
             middlewares_before_results[middleware_name] = result
 
-        handler_result = await handler(
-            context=context, envelope=envelope
-        )
+        handler_result = await self.call_with_injected_deps(handler, **handler_payload)
 
         middlewares_after_results = {}
         for middleware_name in unique_middleware_after:
-            middleware = self.middlewares.get(middleware_name)
-            if not middleware:
+            middleware_handler = self.middlewares.get(middleware_name)
+            if not middleware_handler:
                 raise MiddlewareRegistrationError(
                     middleware_name, "No after middleware registered")
 
-            result = await middleware(envelope=envelope, context=context)
+            result = await self.call_with_injected_deps(middleware_handler, **handler_payload)
 
             if not result:
                 raise MiddlewareExecutionError(middleware_name, "after")
