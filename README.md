@@ -128,9 +128,10 @@ In favor on keeping things easy to extend for now, we will be delegating rate li
 
 The MediaPirate (and soon Gateway) implement a reducer pattern. This is quite an improvement from the original implementation, where we were calling functions inside a giant match case. The event router was implemented mostly because the nesting felt very unintuitive. It felt difficult to follow because how deeply you had to be inside to get the actual logic.
 
-This happens in the main function runner. All of the services needed were put inside a container and it was passed into the actual handlers. It was a functional approach.
+This happened in the main function runner. All of the services needed were put inside a container and it was passed into the actual handlers. It was a functional approach, if a bit inelegant.
 
 ```python
+# OLD IMPLEMENTATION
                         case 'commands.media.video_download':
                             payload = body.get(
                                 'payload', {})
@@ -167,41 +168,20 @@ This happens in the main function runner. All of the services needed were put in
                             )
 ```
 
-`EventRouter` implementation. In this implementation all the event handlers and dependencies are registered via the `EventRouter`. This allows us to easily register any number of dependencies separately, and have them be automatically injected by the dispatcher. The DX is considerably better than before where you had to shove everything inside the the `ServiceContainer`.
+This is the new `EventRouter` implementation. In this implementation all the event handlers and dependencies are registered via the `EventRouter`. This allows us to easily register any number of dependencies separately, and have them be automatically injected by the dispatcher. The DX is considerably better than before where you had to shove everything inside the the `ServiceContainer`.
 
-The `EventRouter` also implements middlewares, so unlike the original implementation, we can do sanity checks and additional computations before and after the actual handling logic.
+The `EventRouter` also implements middlewares, so unlike the original implementation, we can do sanity checks and additional computations before and after the actual handling logic. The middleware system enables cross-cutting concerns (logging, rate limiting, correlation validation) to be handled cleanly without cluttering the business logic.
 
 ```python
+# NEW IMPLEMENTATION
+
     # register dependencies
     router.register(ctx)
     router.register(rate_limiter)
 ```
 
 ```python
-        async with queue.iterator() as queue_iter:
-            async for message in queue_iter:
-                async with message.process():
-                    body_str = message.body.decode()
-
-                    try:
-                        body = json.loads(body_str)
-                    except json.JSONDecodeError:
-                        ctx.logger.error(
-                            f"Invalid JSON in message")
-                        # Do something with the malformed JSON's later
-                        continue
-                    except Exception as e:
-                        ctx.logger.error(
-                            f"Error processing: {e}")
-                        continue
-
-                    correlation_id: str = body.get('correlation_id', '')
-
-                    if not correlation_id:
-                        ctx.logger.error(
-                            "Fatal: Missing correlation_id in event payload")
-                        raise ValueError(
-                            "correlation_id is required for all events")
+# NEW IMPLEMENTATION
 
                     set_correlation_id(correlation_id)
                     envelope = EventEnvelope.from_dict(body)
