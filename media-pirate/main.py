@@ -324,6 +324,7 @@ async def main() -> None:
                             "Unknown event_type received.",
                             extra={"event_type": envelope.type}
                         )
+                        continue
 
                     result_set = await router.dispatch(
                         envelope=envelope
