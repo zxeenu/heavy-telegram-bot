@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import Optional
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
@@ -15,10 +16,53 @@ from src.core.logging_context import get_correlation_id, set_correlation_id
 from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
 from src.handlers.download_cleanup_command import download_cleanup_command_handler
+from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 from src.handlers.reply_command import reply_command_handler
 from src.handlers.update_command import update_message_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 from src.core.rate_limiter import FixedWindowRateLimiter
+
+
+def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
+    """
+    Normalizes a Telegram message payload into a structured format.
+
+    Args:
+        payload (dict): The raw Telegram message payload.
+
+    Returns:
+        NormalizedTelegramPayload: A structured representation of the payload.
+    """
+    from_user = payload.get('from_user') or {}
+    reply_to_message = payload.get('reply_to_message') or {}
+    chat = payload.get('chat') or {}
+
+    try:
+        from_user_id = int(from_user.get('id')) if from_user.get(
+            'id') is not None else None
+    except (TypeError, ValueError) as e:
+        from_user_id = None
+
+    try:
+        chat_id = int(chat.get('id')) if chat.get('id') is not None else None
+    except (TypeError, ValueError) as e:
+        chat_id = None
+
+    text = str(payload.get('text') or '')
+    parts = text.split()
+    filtered_parts = list(filter(None, parts))
+
+    return NormalizedTelegramPayload(
+        message_id=payload.get('id', ''),
+        chat_id=chat_id,
+        text=text,
+        filtered_parts=filtered_parts,
+        from_user_id=from_user_id,
+        from_user_name=str(from_user.get('username', '')),
+        reply_to_message_id=payload.get('reply_to_message_id'),
+        reply_text=str(reply_to_message.get('text', '')),
+
+    )
 
 
 # Convert message to serializable JSON
@@ -82,6 +126,7 @@ def clean_telegram_payload(message: Message):
         replied = message.reply_to_message
         reply_user = getattr(replied.from_user, 'username', None) or getattr(
             replied.from_user, 'id', 'UnknownUser')
+
         reply_text = getattr(replied, 'text', None) or getattr(
             replied, 'caption', None)
 
@@ -166,6 +211,7 @@ def make_event_bus_handler(ctx: ServiceContainer):
         # Extract basic info
         from_user_id = getattr(message.from_user, 'id', 'UnknownUser')
         is_authenticated = authenticator.is_allowed(from_user_id)
+        is_admin = authenticator.is_admin(from_user_id)
 
         filtered_extras = clean_telegram_payload(message=message)
         if not is_authenticated:
@@ -193,6 +239,12 @@ def make_event_bus_handler(ctx: ServiceContainer):
         await ctx.safe_publish(
             routing_key='telegram_events', body=event.to_json(), exchange_name=''
         )
+
+        if is_admin:
+            await ctx.safe_publish(
+                routing_key='gateway_events', body=event.to_json(), exchange_name=''
+            )
+
         ctx.logger.info("Message sent to event bus!",
                         extra=filtered_extras)
 
@@ -200,6 +252,117 @@ def make_event_bus_handler(ctx: ServiceContainer):
 
 
 router = EventRouter()
+
+TELEGRAM_COMMAND_TO_EVENT = {
+    '.grace': 'commands.gateway.grace',
+    '.smite': 'commands.gateway.smite',
+}
+
+
+@router.route(event_type="events.telegram.raw",
+              version=1,
+              options={})
+async def handle_raw_telegram_events_from_admin(
+        envelope: EventEnvelope,
+        ctx: ServiceContainer,
+        rate_limiter: FixedWindowRateLimiter):
+    correlation_id = get_correlation_id()
+
+    data = normalize_telegram_payload(envelope.payload)
+    ctx.logger.info(
+        f"Event received successfully",
+        extra=data)
+
+    filtered_parts = data.get("filtered_parts", [])
+    command_word: Optional[str] = filtered_parts[0] if filtered_parts else None
+    ctx.logger.info("Command word located.", extra={
+                    "command_word": command_word})
+
+    if not command_word:
+        ctx.logger.warning(
+            "Message does not contain any actionable keywords. Skipping.")
+        return
+
+    event_to_dispatch = TELEGRAM_COMMAND_TO_EVENT.get(
+        command_word)
+    if not event_to_dispatch:
+        ctx.logger.error("Failed to process command. No configured mappings!", extra={
+            "event_type": "events.telegram.raw",
+        })
+        return
+
+    # Check if rate limited
+    is_not_rate_limited = await rate_limiter.is_allowed(data["from_user_id"])
+    is_rate_limited = not is_not_rate_limited
+    # is_rate_limited = True # for testing
+
+    if is_rate_limited:
+        rate_limit_payload = {
+            'chat_id': data["chat_id"],
+            'text': "⏳ Too many requests. Please try again shortly.",
+            'reply_to_message_id': data['message_id']
+        }
+        rate_limit_response_event = EventEnvelope.create(type='commands.gateway.reply',
+                                                         correlation_id=correlation_id,
+                                                         payload=rate_limit_payload,
+                                                         is_rate_limited=is_rate_limited)
+        await ctx.safe_publish(
+            routing_key='gateway_events', body=rate_limit_response_event.to_json(), exchange_name=''
+        )
+        ctx.logger.info("Request will not be handled. Received from rate limited user", extra={
+            'event_type': event_to_dispatch,
+            'payload': rate_limit_payload,
+        })
+        return
+
+    # TODO: if events are too old, do not process them
+
+    success_event = EventEnvelope.create(type=event_to_dispatch,
+                                         correlation_id=correlation_id,
+                                         payload=envelope.payload)
+    await ctx.safe_publish(
+        routing_key='gateway_events', body=success_event.to_json(), exchange_name=''
+    )
+    ctx.logger.info("Telegram command mapped to a command handler", extra={
+        'event_type': event_to_dispatch
+    })
+    return 'telegram event converted to gateway event'
+
+
+@router.route(
+    event_type="commands.gateway.grace",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate", "maybe_cleanup_correlation_redis"],
+    }
+)
+async def handle_grace_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    ctx.logger.info("grace command")
+    # payload = envelope.payload
+    # reply_user_id = getattr(getattr(
+    #     getattr(payload, "reply_to_message", None), "from_user", None), "id", None)
+    # reply_user_name = getattr(getattr(getattr(
+    #     payload, "reply_to_message", None), "from_user", None), "username", None)
+    # ctx.logger.info("grace command", extra={
+    #     'envelope': envelope,
+    #     'reply_user_id': reply_user_id,
+    #     'reply_user_name': reply_user_name
+    # })
+    return
+
+
+@router.route(
+    event_type="commands.gateway.smite",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate", "maybe_cleanup_correlation_redis"],
+    }
+)
+async def handle_smite_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    ctx.logger.info("smite command")
+    return
 
 
 @router.route(
