@@ -10,3 +10,5 @@ class NormalizedTelegramPayload(TypedDict):
     from_user_name: str
     reply_to_message_id: Optional[int]
     reply_text: str
+    reply_user_id: Optional[str]
+    reply_user_name: Optional[str]

@@ -43,12 +43,19 @@ def normalize_telegram_payload(payload: dict) -> NormalizedTelegramPayload:
     parts = text.split()
     filtered_parts = list(filter(None, parts))
 
+    # ✅ Safe dictionary access for replied-to user
+    reply_from_user = reply_to_message.get("from_user") or {}
+    reply_user_id = reply_from_user.get("id")
+    reply_user_name = reply_from_user.get("username")
+
     return NormalizedTelegramPayload(
         message_id=payload.get('id', ''),
         chat_id=chat_id,
         text=text,
         filtered_parts=filtered_parts,
         from_user_id=from_user_id,
+        reply_user_id=reply_user_id,
+        reply_user_name=reply_user_name,
         from_user_name=str(from_user.get('username', '')),
         reply_to_message_id=payload.get('reply_to_message_id'),
         reply_text=str(reply_to_message.get('text', '')),

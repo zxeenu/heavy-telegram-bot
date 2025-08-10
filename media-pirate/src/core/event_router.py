@@ -127,6 +127,18 @@ class EventRouter():
         route_options = RouteOption(**(options or {}))
 
         def decorator(func: HandlerFunc) -> HandlerFunc:
+
+            if not inspect.iscoroutinefunction(func):
+                raise RuntimeError(
+                    f"Handler for event '{event_type}' must be async function")
+
+            # Must have 'envelope' param
+            handler_is_valid = has_params(
+                func, ["envelope"])
+
+            if not handler_is_valid:
+                raise HandlerSignatureError(event_type)
+
             self.routes[event_type][version] = func
             self.route_options[event_type][version] = route_options
             return func
@@ -157,6 +169,10 @@ class EventRouter():
                 raise ValueError(
                     f"Middleware '{name}' does not implement required parameters")
 
+            if not inspect.iscoroutinefunction(func):
+                raise RuntimeError(
+                    f"Middleware '{name}' must be async function")
+
             self.middlewares[name] = func
             return func
         return decorator
@@ -174,6 +190,10 @@ class EventRouter():
             if not middleware_is_valid:
                 raise ValueError(
                     f"Middleware '{name}' does not implement required parameters")
+
+            if not inspect.iscoroutinefunction(func):
+                raise RuntimeError(
+                    f"Middleware '{name}' must be async function")
 
             self.middlewares[name] = func
             self.middlewares_before.append(name)
@@ -193,6 +213,10 @@ class EventRouter():
             if not middleware_is_valid:
                 raise ValueError(
                     f"Middleware '{name}' does not implement required parameters")
+
+            if not inspect.iscoroutinefunction(func):
+                raise RuntimeError(
+                    f"Middleware '{name}' must be async function")
 
             self.middlewares[name] = func
             self.middlewares_after.append(name)
