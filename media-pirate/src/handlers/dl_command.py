@@ -3,6 +3,8 @@ import hashlib
 import mimetypes
 import os
 from typing import Literal, Optional
+
+import yt_dlp
 from src.core.event_envelope import EventEnvelope
 from src.core.service_container import ServiceContainer
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
@@ -130,15 +132,14 @@ async def video_dl_command_handler(ctx: ServiceContainer, correlation_id: str, e
         mode = "reply"
 
     url = url_1 or url_2
-    if url is None:
-        ctx.logger.error(
-            f"Does not contain a valid URL")
-        # handle raising event to signify if failed
-        return
 
     ctx.logger.info(
         f"Proceeding to download.",
         extra={"url": url, "mode": mode})
+
+    if url is None:
+        # handle raising event to signify if failed
+        raise RuntimeError("Failed to get a URL")
 
     # Content-addressable key (no extension)
     cleaned_url = get_cleaned_url(url)
@@ -298,15 +299,16 @@ async def audio_dl_command_handler(ctx: ServiceContainer, correlation_id: str, e
         mode = "reply"
 
     url = url_1 or url_2
-    if url is None:
-        ctx.logger.error(
-            f"Does not contain a valid URL")
-        # handle raising event to signify if failed
-        return
 
     ctx.logger.info(
         f"Proceeding to download.",
         extra={"url": url, "mode": mode})
+
+    if url is None:
+        ctx.logger.error(
+            f"Does not contain a valid URL")
+        # handle raising event to signify if failed
+        raise RuntimeError("Failed to get a URL")
 
     # Content-addressable key (no extension)
     cleaned_url = get_cleaned_url(url)

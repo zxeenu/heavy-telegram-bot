@@ -2,6 +2,7 @@ import asyncio
 import logging
 import json
 import os
+import random
 from typing import Optional
 import yt_dlp
 from src.core.event_envelope import EventEnvelope
@@ -9,7 +10,7 @@ from src.core.event_router import EventRouter
 from src.core.logging_context import get_correlation_id, set_correlation_id
 from src.core.rate_limiter import FixedWindowRateLimiter
 from src.core.service_container import ServiceContainer
-from src.dispatchers.message_update_command import download_error_message_dispatcher
+from src.dispatchers.message_update_command import download_error_message_dispatcher, message_update_command_dispatcher, safe_int
 from src.handlers.dl_command import video_dl_command_handler, audio_dl_command_handler
 from src.handlers.normalized_telegram_payload import NormalizedTelegramPayload
 
@@ -167,7 +168,7 @@ async def handle_raw_telegram_events(
               options={
                   'retry_attempt': 1,
                   'middleware_before': ["correlation_guard_prepare"],
-                  'middleware_after': ["correlation_guard_validate"],
+                  'middleware_after': ["correlation_guard_validate", "maybe_send_error_message"],
               })
 async def handle_video_download_command(envelope: EventEnvelope,
                                         ctx: ServiceContainer):
@@ -175,13 +176,18 @@ async def handle_video_download_command(envelope: EventEnvelope,
     data = normalize_telegram_payload(envelope.payload)
     try:
         await video_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=envelope.type, timestamp=envelope.timestamp, version=envelope.version, payload=data)
+        return "video download handled withoout issues"
     except yt_dlp.utils.DownloadError as e:
-        await download_error_message_dispatcher(ctx=ctx)
         ctx.logger.warning(f"DownloadError: {e}")
+    except RuntimeError as e:
+        ctx.logger.error(f"RuntimeError caught: {e}")
     except Exception:
         # TODO: send off to QuarterMaster
         ctx.logger.exception(
             "Handler invocation failed")
+
+    envelope.payload["_send_error_message"] = True
+    return "Unable to download video, setting error handling flag"
 
 
 @router.route(event_type="commands.media.audio_download",
@@ -189,7 +195,7 @@ async def handle_video_download_command(envelope: EventEnvelope,
               options={
                   'retry_attempt': 1,
                   'middleware_before': ["correlation_guard_prepare"],
-                  'middleware_after': ["correlation_guard_validate"],
+                  'middleware_after': ["correlation_guard_validate", "maybe_send_error_message"],
               })
 async def handle_audio_download_command(envelope: EventEnvelope,
                                         ctx: ServiceContainer):
@@ -197,13 +203,18 @@ async def handle_audio_download_command(envelope: EventEnvelope,
     data = normalize_telegram_payload(envelope.payload)
     try:
         await audio_dl_command_handler(ctx=ctx, correlation_id=correlation_id, event_type=envelope.type, timestamp=envelope.timestamp, version=envelope.version, payload=data)
+        return "audio download handled without issues"
     except yt_dlp.utils.DownloadError as e:
-        await download_error_message_dispatcher(ctx=ctx)
         ctx.logger.warning(f"DownloadError: {e}")
+    except RuntimeError as e:
+        ctx.logger.error(f"RuntimeError caught: {e}")
     except Exception:
         # TODO: send off to QuarterMaster
         ctx.logger.exception(
             "Handler invocation failed")
+
+    envelope.payload["_send_error_message"] = True
+    return "Unable to download video, setting error handling flag"
 
 
 @router.register_middleware(name='maybe_rate_limit_increment')
@@ -246,6 +257,44 @@ async def handle_rate_limit_usage_increment(
     ctx.logger.info("Letting the user know that we have begun processing his request", extra={
         'payload': payload,
     })
+    return True
+
+
+@router.register_middleware(name='maybe_send_error_message')
+async def handle_maybe_send_download_error_msg(
+        envelope: EventEnvelope,
+        ctx: ServiceContainer):
+
+    control_flag = envelope.payload.get("_send_error_message")
+    if not control_flag:
+        return True
+
+    # handle a slight delay. sometimes control comes here before redis data is set
+    await asyncio.sleep(2 + random.uniform(0, 1))
+    correlation_id = get_correlation_id()
+    composite_key = f"correlation_id:{correlation_id}:optimistic_reply"
+
+    message_id_str, chat_id_str = await ctx.redis.hmget(composite_key, 'message_id', 'chat_id')
+    message_id = safe_int(message_id_str)
+    chat_id = safe_int(chat_id_str)
+
+    ctx.logger.info('handling download error message', extra={
+        'composite_key': composite_key,
+        'message_id': message_id,
+        'chat_id': chat_id
+    })
+
+    if message_id is None:
+        ctx.logger.warning(
+            "Missing message_id")
+        return
+
+    if chat_id is None:
+        ctx.logger.warning(
+            "Missing chat_id")
+        return
+
+    await message_update_command_dispatcher(ctx=ctx, chat_id=chat_id, message_id=message_id, text="💣 Didn't work.")
     return True
 
 

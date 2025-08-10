@@ -216,7 +216,9 @@ def make_event_bus_handler(ctx: ServiceContainer):
 
         # Extract basic info
         from_user_id = getattr(message.from_user, 'id', 'UnknownUser')
-        is_authenticated = authenticator.is_allowed(from_user_id)
+        chat_id = getattr(message.chat, 'id', 'UnknownChat')
+
+        is_authenticated = await authenticator.is_allowed(user_id=from_user_id, chat_id=chat_id, ctx=ctx)
         is_admin = authenticator.is_admin(from_user_id)
 
         filtered_extras = clean_telegram_payload(message=message)
@@ -344,9 +346,19 @@ async def handle_raw_telegram_events_from_admin(
     }
 )
 async def handle_grace_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
-    ctx.logger.info("grace command")
-    cleaned = normalize_telegram_payload(envelope.payload)
-    ctx.logger.info(cleaned)
+    WEEK_IN_SECONDS = 604800  # 1 week
+    data = normalize_telegram_payload(envelope.payload)
+
+    if not data['chat_id']:
+        return 'Chat id not found, aborting'
+
+    key = f"graced_chat:{data['chat_id']}"
+    response = await ctx.redis.set(key, 'access_granted', ex=WEEK_IN_SECONDS)
+    ctx.logger.info(response, extra={
+        'key': key,
+        'response': response
+    })
+    await telegram_app.send_reaction(chat_id=data['chat_id'], message_id=data['message_id'], emoji='👍')
 
     # payload = envelope.payload
     # reply_user_id = getattr(getattr(
@@ -358,7 +370,7 @@ async def handle_grace_command(envelope: EventEnvelope, ctx: ServiceContainer, t
     #     'reply_user_id': reply_user_id,
     #     'reply_user_name': reply_user_name
     # })
-    return
+    return 'Chat has been graced'
 
 
 @router.route(
@@ -370,8 +382,19 @@ async def handle_grace_command(envelope: EventEnvelope, ctx: ServiceContainer, t
     }
 )
 async def handle_smite_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
-    ctx.logger.info("smite command")
-    return
+    data = normalize_telegram_payload(envelope.payload)
+
+    if not data['chat_id']:
+        return 'Chat id not found, aborting'
+
+    key = f"graced_chat:{data['chat_id']}"
+    response = await ctx.redis.delete(key)
+    ctx.logger.info(response, extra={
+        'key': key,
+        'response': response
+    })
+    await telegram_app.send_reaction(chat_id=data['chat_id'], message_id=data['message_id'], emoji='👍')
+    return 'Chat has been disgraced'
 
 
 @router.route(
