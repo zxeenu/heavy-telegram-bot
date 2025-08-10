@@ -2,17 +2,16 @@ import asyncio
 import json
 import logging
 import os
-from typing import Optional
 from hydrogram import Client
 from hydrogram.handlers import MessageHandler
 from hydrogram.types import Message
 from src.authenticate import Authenticator
+from src.core.event_router import EventRouter
 from src.core.service_container import ServiceContainer
 from time import time
 import uuid
-from datetime import datetime, timezone
 from src.core.event_envelope import EventEnvelope
-from src.core.logging_context import set_correlation_id
+from src.core.logging_context import get_correlation_id, set_correlation_id
 from src.dispatchers.disk_cleanup_command import downloads_cleanup_dispatcher
 from src.handlers.audio_ready_event import audio_ready_event_handler
 from src.handlers.download_cleanup_command import download_cleanup_command_handler
@@ -20,7 +19,6 @@ from src.handlers.reply_command import reply_command_handler
 from src.handlers.update_command import update_message_command_handler
 from src.handlers.video_ready_event import video_ready_event_handler
 from src.core.rate_limiter import FixedWindowRateLimiter
-from src.telegram_message_helper import optimistic_reply_cleanup
 
 
 # Convert message to serializable JSON
@@ -174,24 +172,9 @@ def make_event_bus_handler(ctx: ServiceContainer):
             ctx.logger.warning("Message skipped", extra=filtered_extras)
             return
 
+        # services will respond to the user if rate limited
         is_not_rate_limited = await rate_limiter.is_allowed(from_user_id)
         is_rate_limited = not is_not_rate_limited
-
-        # if is_rate_limited:
-        # TODO: We need to let the individual services reply back!
-        # because this will think event non commands need to be replied to
-        # or potentially, we can dispatch events right from gateway, instead
-        # of funneling the raw tg events.
-
-        # await client.send_message(
-        #     chat_id=message.chat.id,
-        #     text="⏳ Too many requests. Please try again shortly.",
-        #     reply_to_message_id=message.id
-        # )
-        # ctx.logger.warning("Too many requests. Rate limited!", extra={
-        #     'from_user_id': from_user_id
-        # })
-        # return
 
         try:
             message_dict = to_serializable(obj=message)
@@ -202,17 +185,13 @@ def make_event_bus_handler(ctx: ServiceContainer):
         await ctx.redis.hset(
             f"correlation_id:{correlation_id}", 'start_time', time())
 
-        event = EventEnvelope(type="events.telegram.raw",
-                              correlation_id=correlation_id,
-                              timestamp=datetime.now(
-                                  timezone.utc).isoformat(),
-                              payload=message_dict,
-                              version=1,
-                              is_rate_limited=is_rate_limited)
-        event_as_json = event.to_json()
-
+        event = EventEnvelope.create(type="events.telegram.raw",
+                                     correlation_id=correlation_id,
+                                     payload=message_dict,
+                                     version=1,
+                                     is_rate_limited=is_rate_limited)
         await ctx.safe_publish(
-            routing_key='telegram_events', body=event_as_json, exchange_name=''
+            routing_key='telegram_events', body=event.to_json(), exchange_name=''
         )
         ctx.logger.info("Message sent to event bus!",
                         extra=filtered_extras)
@@ -220,24 +199,126 @@ def make_event_bus_handler(ctx: ServiceContainer):
     return event_bus_handler
 
 
+router = EventRouter()
+
+
+@router.route(
+    event_type="events.dl.video.ready",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate", "maybe_cleanup_correlation_redis"],
+    }
+)
+async def handle_video_ready_event(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    return await video_ready_event_handler(
+        ctx=ctx, telegram_app=telegram_app, payload=envelope.payload
+    )
+
+
+@router.route(
+    event_type="events.dl.audio.ready",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate", "maybe_cleanup_correlation_redis"],
+    }
+)
+async def handle_audio_ready_event(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    return await audio_ready_event_handler(
+        ctx=ctx, telegram_app=telegram_app, payload=envelope.payload
+    )
+
+
+@router.route(
+    event_type="commands.gateway.downloads-cleanup",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate"],
+    }
+)
+async def handle_download_cleanup_command(envelope: EventEnvelope, ctx: ServiceContainer):
+    return await download_cleanup_command_handler(ctx=ctx, payload=envelope.payload)
+
+
+@router.route(
+    event_type="commands.gateway.reply",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate"],
+    }
+)
+async def handle_reply_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    return await reply_command_handler(ctx=ctx, telegram_app=telegram_app, payload=envelope.payload)
+
+
+@router.route(
+    event_type="commands.gateway.message-update",
+    version=1,
+    options={
+        'middleware_before': ["correlation_guard_prepare"],
+        'middleware_after': ["correlation_guard_validate"],
+    }
+)
+async def handle_update_message_command(envelope: EventEnvelope, ctx: ServiceContainer, telegram_app: Client):
+    return await update_message_command_handler(ctx=ctx, telegram_app=telegram_app, payload=envelope.payload)
+
+
+# Middleware
+@router.register_before_middleware(name="correlation_guard_prepare")
+async def correlation_guard_prepare(envelope: EventEnvelope):
+    envelope.payload["_correlation_snapshot"] = get_correlation_id()
+    return True
+
+
+@router.register_after_middleware(name="correlation_guard_validate")
+async def correlation_guard_validate(envelope: EventEnvelope):
+    expected = envelope.payload.get("_correlation_snapshot")
+    actual = get_correlation_id()
+    if expected != actual:
+        raise RuntimeError("Context corruption detected")
+    return True
+
+
+@router.register_after_middleware(name="cleanup_counter_increment")
+async def cleanup_counter_increment(envelope: EventEnvelope, ctx: ServiceContainer):
+    key = "cleanup_event_counter"
+    count = await ctx.redis.incr(key)
+    # Set TTL so it doesn't live forever (e.g., 1 day)
+    await ctx.redis.expire(key, 86400)
+
+    if count >= 100:
+        await ctx.redis.delete(key)
+        await downloads_cleanup_dispatcher(ctx=ctx, max_delete=100)
+
+    return True
+
+
+@router.register_before_middleware(name='logger')
+async def log_event_start(envelope: EventEnvelope, ctx: ServiceContainer):
+    ctx.logger.info(f"⏱️ Handling {envelope.type}")
+    return True
+
+
+@router.register_middleware(name="maybe_cleanup_correlation_redis")
+async def cleanup_correlation_redis(envelope: EventEnvelope, ctx: ServiceContainer):
+    control_flag = envelope.payload.get("_cleaup_correlation_id_start_time")
+    # envelope.payload["_cleaup_correlation_id_start_time"] = True
+    ctx.logger.info("_cleaup_correlation_id_start_time", extra={
+        'control_flag': control_flag
+    })
+    if not control_flag:
+        return True
+
+    correlation_id = get_correlation_id()
+    await ctx.redis.hdel(f"correlation_id:{correlation_id}", 'start_time')
+    return True
+
+
 # Background task example
-async def background_task(telegram_app: Client, ctx: ServiceContainer):
-
-    # lifescyle hook to be used
-    async def after_event_handling():
-        key = "cleanup_event_counter"
-        count = await ctx.redis.incr(key)
-        # Set TTL so it doesn't live forever (e.g., 1 day)
-        await ctx.redis.expire(key, 86400)
-        if count >= 100:
-            await ctx.redis.delete(key)
-            await downloads_cleanup_dispatcher(ctx=ctx, max_delete=100)
-        return
-
-    async def cleanup_redis(correlation_id_str: str):
-        await ctx.redis.hdel(
-            f"correlation_id:{correlation_id_str}", 'start_time')
-        return
+async def gateway_event_processor(telegram_app: Client, ctx: ServiceContainer):
 
     async with ctx.connection as connection:
         channel = await connection.channel()
@@ -264,48 +345,31 @@ async def background_task(telegram_app: Client, ctx: ServiceContainer):
                             f"Error processing: {e}")
                         continue
 
-                    event_type: str = body.get('type', '')
-                    version = int(body.get('version')) if body.get(
-                        'version') is not None else None
                     correlation_id: str = body.get('correlation_id', '')
-                    timestamp: str = body.get('timestamp', '')
+
+                    if not correlation_id:
+                        ctx.logger.error(
+                            "Fatal: Missing correlation_id in event payload")
+                        raise ValueError(
+                            "correlation_id is required for all events")
 
                     set_correlation_id(correlation_id)
+                    envelope = EventEnvelope.from_dict(body)
 
-                    if version is None:
-                        ctx.logger.info(
-                            "Event does not have a version. Malformed event payload.")
+                    route = router.get_route(envelope=envelope)
+
+                    if not route:
+                        ctx.logger.warning(
+                            "Unknown event_type received.",
+                            extra={"event_type": envelope.type}
+                        )
                         continue
 
-                    match event_type:
-                        case 'events.dl.video.ready':
-                            await video_ready_event_handler(
-                                ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-                            await cleanup_redis(correlation_id)
-
-                        case 'events.dl.audio.ready':
-                            await audio_ready_event_handler(
-                                ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-                            await cleanup_redis(correlation_id)
-
-                        case 'commands.gateway.downloads-cleanup':
-                            await download_cleanup_command_handler(ctx=ctx, payload=body.get('payload', {}))
-
-                        case 'commands.gateway.reply':
-                            await reply_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-
-                        case 'commands.gateway.message-update':
-                            await update_message_command_handler(ctx=ctx, telegram_app=telegram_app, payload=body.get('payload', {}))
-
-                        # Add more cases here as needed
-                        case _:
-                            ctx.logger.warning(
-                                "Unknown event_type received.", extra={
-                                    event_type: event_type
-                                })
-                            pass
-
-                    await after_event_handling()
+                    result_set = await router.dispatch(
+                        envelope=envelope
+                    )
+                    ctx.logger.info(result_set)
+                    continue
 
 
 # Main entry point — directly manages the context lifecycle
@@ -320,12 +384,35 @@ async def main() -> None:
             api_hash=os.environ["TELEGRAM_HASH"]
         )
 
+        # Initialize dependencies
+        authenticator = Authenticator()
+        rate_limiter = FixedWindowRateLimiter(redis=ctx.redis)
+
+        # overide logger
+        router.set_logger(ctx.logger)
+
+        # setup dependencies
+        router.register(ctx)
+        router.register(authenticator)
+        router.register(rate_limiter)
+
+        # Initialize Telegram client
+        telegram_app = Client(
+            name="account_session",
+            api_id=os.environ["TELEGRAM_ID"],
+            api_hash=os.environ["TELEGRAM_HASH"]
+        )
+
+        # Register telegram_app with router so handlers can access it
+        router.register(telegram_app)
+
         await ctx.channel.declare_queue(name='telegram_events', durable=False)
         telegram_app.add_handler(MessageHandler(make_event_bus_handler(ctx)))
+
         await telegram_app.start()
 
         await asyncio.gather(
-            background_task(telegram_app=telegram_app, ctx=ctx),
+            gateway_event_processor(telegram_app=telegram_app, ctx=ctx),
             asyncio.Event().wait()
         )
     finally:

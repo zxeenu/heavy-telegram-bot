@@ -214,10 +214,10 @@ async def handle_rate_limit_usage_increment(
     data = normalize_telegram_payload(envelope.payload)
 
     user_id = data['from_user_id']
-    meaningul_use_count = await rate_limiter.increment(user_id=user_id)
+    meaningful_use_count = await rate_limiter.increment(user_id=user_id)
     ctx.logger.info("Rate limit incremented", extra={
         'from_user_id': user_id,
-        'meaningul_use_count': meaningul_use_count
+        'meaningful_use_count': meaningful_use_count
     })
 
     # lets be optimistic and let the user know we are doing __something__

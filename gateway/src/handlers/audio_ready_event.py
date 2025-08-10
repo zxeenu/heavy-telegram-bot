@@ -89,7 +89,7 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
         await ctx.safe_publish(
             routing_key='telegram_events', body=event_as_json, exchange_name=''
         )
-        return
+        return 'delayed for 2 seconds'
 
     start_time_raw = await ctx.redis.hget(
         f"correlation_id:{correlation_id}", "start_time"
@@ -145,7 +145,8 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
             # await ctx.redis.delete(f"audio_content:{object_name}")
             await ctx.redis.delete(get_interest_accumulator_key())
             await optimistic_reply_cleanup(ctx=ctx, telegram_app=telegram_app)
-            return
+            payload["_cleaup_correlation_id_start_time"] = True
+            return "handled audio via redis cache"
         except Exception as e:
             ctx.logger.warning(
                 "Cached file_id failed, retrying download...",
@@ -218,3 +219,5 @@ async def audio_ready_event_handler(ctx: ServiceContainer, telegram_app: Client,
     ctx.logger.info("File uploaded to telegram, and cached locally", extra={
         'file_id': file_id
     })
+    payload["_cleaup_correlation_id_start_time"] = True
+    return 'normallly downloaded to disk and reuploaded to telegram'
