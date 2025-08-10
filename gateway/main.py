@@ -573,6 +573,8 @@ async def main() -> None:
 
     try:
         ctx.logger.info("Gateway Service started!")
+
+        # Initialize Telegram client
         telegram_app = Client(
             name="account_session",
             api_id=os.environ["TELEGRAM_ID"],
@@ -590,13 +592,6 @@ async def main() -> None:
         router.register(ctx)
         router.register(authenticator)
         router.register(rate_limiter)
-
-        # Initialize Telegram client
-        telegram_app = Client(
-            name="account_session",
-            api_id=os.environ["TELEGRAM_ID"],
-            api_hash=os.environ["TELEGRAM_HASH"]
-        )
 
         # Register telegram_app with router so handlers can access it
         router.register(telegram_app)
